@@ -290,10 +290,19 @@ with tab3:
 
                 with col2:
                     code_column = st.selectbox("HCPCS Code Column", columns)
-                    fee_column = st.selectbox("Non-Facility Fee Column", columns)
+                    fee_column = st.selectbox(
+                        "Non-Facility Fee Column",
+                        ["(none)"] + columns,
+                        index=1 if len(columns) > 0 else 0
+                    )
                     facility_column = st.selectbox(
                         "Facility Fee Column (optional)",
                         ["(none)"] + columns
+                    )
+                    allowed_amount_column = st.selectbox(
+                        "Allowed Amount Column (optional)",
+                        ["(none)"] + columns,
+                        help="Use this if your CSV has an 'allowed amount' column instead of separate fee columns"
                     )
                     state_column = st.selectbox(
                         "State Column (optional)",
@@ -313,8 +322,9 @@ with tab3:
                                 payer_type=payer_type,
                                 year=year,
                                 code_column=code_column,
-                                fee_column=fee_column,
+                                fee_column=fee_column if fee_column != "(none)" else None,
                                 facility_fee_column=facility_column if facility_column != "(none)" else None,
+                                allowed_amount_column=allowed_amount_column if allowed_amount_column != "(none)" else None,
                                 state_column=state_column if state_column != "(none)" else None,
                                 default_state=default_state if default_state else None,
                                 source=uploaded_file.name,

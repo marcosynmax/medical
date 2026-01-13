@@ -14,8 +14,9 @@ def parse_payer_csv(
     payer_type: str,
     year: int,
     code_column: str = "hcpcs_code",
-    fee_column: str = "fee",
+    fee_column: Optional[str] = "fee",
     facility_fee_column: Optional[str] = None,
+    allowed_amount_column: Optional[str] = None,
     modifier_column: Optional[str] = None,
     state_column: Optional[str] = None,
     default_state: Optional[str] = None,
@@ -31,6 +32,7 @@ def parse_payer_csv(
         code_column: Column name for HCPCS code
         fee_column: Column name for non-facility fee
         facility_fee_column: Column name for facility fee (optional)
+        allowed_amount_column: Column name for allowed amount (optional, used as non-facility fee)
         modifier_column: Column name for modifier (optional)
         state_column: Column name for state (optional)
         default_state: Default state if not in CSV
@@ -47,8 +49,13 @@ def parse_payer_csv(
             if not hcpcs_code:
                 continue
 
-            # Parse fees
-            non_fac_fee = _parse_decimal(row.get(fee_column))
+            # Parse fees - allowed amount takes precedence if provided
+            if allowed_amount_column:
+                allowed_amount = _parse_decimal(row.get(allowed_amount_column))
+                non_fac_fee = allowed_amount
+            else:
+                non_fac_fee = _parse_decimal(row.get(fee_column)) if fee_column else None
+
             fac_fee = _parse_decimal(row.get(facility_fee_column)) if facility_fee_column else None
 
             # Skip if no fees
