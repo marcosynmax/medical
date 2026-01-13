@@ -104,6 +104,19 @@ PYTHONPATH=src python3 -m cms_rates list-localities --state TX
 PYTHONPATH=src python3 -m cms_rates info 99213
 ```
 
+### Search by description
+
+```bash
+# Search for CPT codes by description
+PYTHONPATH=src python3 -m cms_rates search "office visit"
+
+# Search with more results
+PYTHONPATH=src python3 -m cms_rates search "x-ray" --limit 50
+
+# Search with JSON output
+PYTHONPATH=src python3 -m cms_rates search "MRI" --format json
+```
+
 ## Example Output
 
 ```
@@ -136,6 +149,7 @@ Final Payment: $2.7873 × $32.3465 = $90.16
 | Command | Description |
 |---------|-------------|
 | `lookup <CPT> <REGION>` | Look up reimbursement rate |
+| `search <QUERY>` | Search CPT codes by description |
 | `update` | Download/update CMS fee schedule data |
 | `list-localities` | List all available localities |
 | `info <CPT>` | Show CPT code details without pricing |

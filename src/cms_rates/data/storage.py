@@ -349,3 +349,45 @@ def get_all_localities(year: int) -> list[GPCIRecord]:
                 year=row["year"],
             ))
     return results
+
+
+def search_by_description(query: str, year: int, limit: int = 50) -> list[RVURecord]:
+    """Search for CPT codes by description.
+
+    Args:
+        query: Search query (matches against description)
+        year: Fee schedule year
+        limit: Maximum number of results to return
+
+    Returns:
+        List of matching RVURecord objects
+    """
+    results = []
+    with get_connection() as conn:
+        # Use LIKE for case-insensitive search
+        search_pattern = f"%{query}%"
+        rows = conn.execute(
+            """
+            SELECT * FROM rvu
+            WHERE year = ? AND description LIKE ?
+            ORDER BY hcpcs_code
+            LIMIT ?
+            """,
+            (year, search_pattern, limit),
+        ).fetchall()
+
+        for row in rows:
+            results.append(RVURecord(
+                hcpcs_code=row["hcpcs_code"],
+                modifier=row["modifier"],
+                description=row["description"],
+                status_code=row["status_code"],
+                work_rvu=Decimal(str(row["work_rvu"])),
+                non_facility_pe_rvu=Decimal(str(row["non_facility_pe_rvu"])),
+                facility_pe_rvu=Decimal(str(row["facility_pe_rvu"])),
+                malpractice_rvu=Decimal(str(row["malpractice_rvu"])),
+                conversion_factor=Decimal(str(row["conversion_factor"])),
+                global_days=row["global_days"],
+                year=row["year"],
+            ))
+    return results

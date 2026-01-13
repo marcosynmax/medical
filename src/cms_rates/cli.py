@@ -361,5 +361,86 @@ def info(cpt_code: str, year: Optional[int]):
     console.print(table)
 
 
+@main.command()
+@click.argument("query")
+@click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
+@click.option("--limit", "-l", type=int, default=25, help="Maximum number of results")
+@click.option(
+    "--format", "-o", "output_format",
+    type=click.Choice(["table", "json", "csv"]),
+    default="table",
+    help="Output format"
+)
+def search(query: str, year: Optional[int], limit: int, output_format: str):
+    """Search for CPT codes by description.
+
+    QUERY: Keywords to search in CPT descriptions
+
+    Examples:
+
+        cms-rates search "office visit"
+
+        cms-rates search "x-ray" --limit 50
+
+        cms-rates search "MRI" --format json
+    """
+    year = year or get_default_year()
+
+    from cms_rates.data.storage import search_by_description
+
+    if not has_data(year):
+        console.print(f"[red]No data available for {year}.[/red]")
+        console.print(f"Run 'cms-rates update --year {year}' to download data.")
+        sys.exit(1)
+
+    results = search_by_description(query, year, limit=limit)
+
+    if not results:
+        console.print(f"[yellow]No CPT codes found matching '{query}'[/yellow]")
+        return
+
+    if output_format == "json":
+        import json
+        output = []
+        for rvu in results:
+            output.append({
+                "code": rvu.hcpcs_code,
+                "modifier": rvu.modifier,
+                "description": rvu.description,
+                "work_rvu": float(rvu.work_rvu),
+                "non_facility_pe_rvu": float(rvu.non_facility_pe_rvu),
+                "facility_pe_rvu": float(rvu.facility_pe_rvu),
+                "malpractice_rvu": float(rvu.malpractice_rvu),
+            })
+        print(json.dumps(output, indent=2))
+
+    elif output_format == "csv":
+        print("code,modifier,description,work_rvu,non_fac_pe_rvu,fac_pe_rvu,mp_rvu")
+        for rvu in results:
+            desc = rvu.description.replace(",", ";")
+            print(f"{rvu.hcpcs_code},{rvu.modifier or ''},{desc},{rvu.work_rvu:.2f},{rvu.non_facility_pe_rvu:.2f},{rvu.facility_pe_rvu:.2f},{rvu.malpractice_rvu:.2f}")
+
+    else:
+        table = Table(title=f"Search Results for '{query}' ({len(results)} found)")
+        table.add_column("Code", style="cyan")
+        table.add_column("Description")
+        table.add_column("Work RVU", justify="right")
+        table.add_column("Non-Fac PE", justify="right")
+        table.add_column("Fac PE", justify="right")
+        table.add_column("MP RVU", justify="right")
+
+        for rvu in results:
+            table.add_row(
+                rvu.hcpcs_code,
+                rvu.description[:50] + "..." if len(rvu.description) > 50 else rvu.description,
+                f"{rvu.work_rvu:.2f}",
+                f"{rvu.non_facility_pe_rvu:.2f}",
+                f"{rvu.facility_pe_rvu:.2f}",
+                f"{rvu.malpractice_rvu:.2f}",
+            )
+
+        console.print(table)
+
+
 if __name__ == "__main__":
     main()
