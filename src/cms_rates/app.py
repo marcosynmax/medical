@@ -710,6 +710,123 @@ with tab4:
                 except Exception as e:
                     st.error(f"Error adding rate: {e}")
 
+    # Upload fee schedule
+    with st.expander("Upload Fee Schedule (CSV)"):
+        st.markdown("Upload a CSV file containing CPT codes and reimbursement rates.")
+
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type=["csv"],
+            key="fee_schedule_upload",
+            help="CSV should contain at minimum a CPT code column and a rate column"
+        )
+
+        if uploaded_file is not None:
+            try:
+                # Read CSV
+                import io
+                df_upload = pd.read_csv(uploaded_file)
+
+                st.markdown(f"**Found {len(df_upload)} rows and {len(df_upload.columns)} columns**")
+
+                # Column mapping
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    upload_payer = st.text_input(
+                        "Payer Name",
+                        key="upload_payer_name",
+                        placeholder="e.g., Blue Cross, Medi-Cal"
+                    )
+                    upload_type = st.selectbox(
+                        "Payer Type",
+                        ["commercial", "medicaid", "other"],
+                        key="upload_payer_type"
+                    )
+                    upload_state = st.text_input(
+                        "State (optional)",
+                        max_chars=2,
+                        key="upload_payer_state",
+                        placeholder="e.g., CA"
+                    )
+
+                with col2:
+                    columns = list(df_upload.columns)
+                    code_col = st.selectbox(
+                        "CPT Code Column",
+                        columns,
+                        key="upload_code_col"
+                    )
+                    rate_col = st.selectbox(
+                        "Rate Column",
+                        columns,
+                        key="upload_rate_col"
+                    )
+                    fac_rate_col = st.selectbox(
+                        "Facility Rate Column (optional)",
+                        ["(none)"] + columns,
+                        key="upload_fac_rate_col"
+                    )
+
+                # Preview data
+                st.markdown("**Preview (first 10 rows):**")
+                preview_cols = [code_col, rate_col]
+                if fac_rate_col != "(none)":
+                    preview_cols.append(fac_rate_col)
+                st.dataframe(df_upload[preview_cols].head(10), hide_index=True)
+
+                # Import button
+                if st.button("Import Fee Schedule", key="import_fee_schedule_btn", type="primary"):
+                    if not upload_payer:
+                        st.error("Payer Name is required")
+                    else:
+                        imported = 0
+                        errors = 0
+
+                        for _, row in df_upload.iterrows():
+                            try:
+                                cpt_code = str(row[code_col]).strip()
+                                if not cpt_code:
+                                    continue
+
+                                # Parse rate
+                                rate_str = str(row[rate_col]).replace('$', '').replace(',', '').strip()
+                                non_fac_rate = Decimal(rate_str) if rate_str and rate_str != 'nan' else None
+
+                                # Parse facility rate if specified
+                                fac_rate = None
+                                if fac_rate_col != "(none)":
+                                    fac_str = str(row[fac_rate_col]).replace('$', '').replace(',', '').strip()
+                                    fac_rate = Decimal(fac_str) if fac_str and fac_str != 'nan' else None
+
+                                if non_fac_rate is None and fac_rate is None:
+                                    continue
+
+                                payer_rate = PayerRate(
+                                    hcpcs_code=cpt_code.upper(),
+                                    payer_name=upload_payer,
+                                    payer_type=upload_type,
+                                    year=year,
+                                    state=upload_state.upper() if upload_state else None,
+                                    non_facility_rate=non_fac_rate,
+                                    facility_rate=fac_rate,
+                                    source=f"Uploaded: {uploaded_file.name}",
+                                )
+                                insert_payer_rate(payer_rate)
+                                imported += 1
+                            except Exception:
+                                errors += 1
+
+                        if imported > 0:
+                            st.success(f"Successfully imported {imported} rates for '{upload_payer}'")
+                        if errors > 0:
+                            st.warning(f"Skipped {errors} rows due to invalid data")
+                        if imported > 0:
+                            st.rerun()
+
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+
     # Show existing payers
     with st.expander("View Existing Payers"):
         payers = get_all_payers(year)

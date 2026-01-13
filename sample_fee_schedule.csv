@@ -1,0 +1,9 @@
+code,rate,facility_rate,description
+99213,85.00,65.00,Office visit established
+99214,125.00,95.00,Office visit moderate
+99215,175.00,135.00,Office visit high
+99203,110.00,85.00,Office visit new low
+99204,165.00,125.00,Office visit new moderate
+99205,210.00,160.00,Office visit new high
+99385,150.00,120.00,Preventive visit 18-39
+99395,160.00,130.00,Preventive visit 40-64
