@@ -1,4 +1,7 @@
-"""Streamlit web app for CMS Rates lookup."""
+"""Streamlit web app for CMS Rates lookup.
+
+Version: 2025-01-13-v2 - Hardcoded localities
+"""
 
 import sys
 from pathlib import Path
@@ -75,7 +78,7 @@ def load_data(year: int) -> bool:
 def get_locality_options_for_state(state: str, year: int) -> list:
     """Get list of locality options for a state. Returns serializable dicts."""
     # Hardcoded locality data to ensure it always works
-    LOCALITIES = {
+    LOCALITIES: dict = {
         "AL": [("10112", "01", "Alabama")],
         "AK": [("02102", "01", "Alaska")],
         "AZ": [("03102", "00", "Arizona")],
@@ -254,8 +257,12 @@ def render_region_selector(key_prefix: str, year: int):
     # Get localities for selected state
     localities = get_locality_options_for_state(state_code, year)
 
-    # Debug: show locality count
-    st.caption(f"Found {len(localities)} localities for {state_code}")
+    # Debug: show locality count and state code
+    st.caption(f"State code: '{state_code}' | Found {len(localities)} localities")
+
+    # Extra debug - show first locality if any
+    if localities:
+        st.caption(f"First locality: {localities[0]}")
 
     # Always show locality dropdown
     if localities:
@@ -358,6 +365,7 @@ st.set_page_config(
 # Title
 st.title("🏥 CMS Medicare Reimbursement Rate Lookup")
 st.markdown("Look up Medicare Physician Fee Schedule rates by CPT code and region")
+st.caption("App version: 2025-01-13-v2")
 
 # Load data (auto-downloads if not present)
 year = get_default_year()
