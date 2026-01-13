@@ -39,26 +39,39 @@ def load_data(year: int) -> bool:
     ensure_data_dirs()
     init_database()
 
+    # Always ensure GPCI data is loaded (use embedded data)
+    gpci_loaded = False
+    try:
+        from cms_rates.data.storage import get_connection
+        with get_connection() as conn:
+            gpci_count = conn.execute(
+                "SELECT COUNT(*) FROM gpci WHERE year = ?", (year,)
+            ).fetchone()[0]
+            gpci_loaded = gpci_count > 0
+    except:
+        gpci_loaded = False
+
+    if not gpci_loaded:
+        clear_gpci_data(year)
+        insert_gpci_records(get_embedded_gpci_records(year))
+
+    # Check if RVU data exists
     if has_data(year):
         return True
 
     # Download RVU file
     rvu_file = download_rvu_file(year, "a")
     if not rvu_file:
+        # Even if RVU download fails, we have GPCI data
         return False
 
     # Import RVU data
     clear_rvu_data(year)
     insert_rvu_records(parse_rvu_file(rvu_file, year))
 
-    # Import GPCI data (use embedded data)
-    clear_gpci_data(year)
-    insert_gpci_records(get_embedded_gpci_records(year))
-
     return True
 
 
-@st.cache_data
 def get_locality_options_for_state(state: str, year: int) -> list:
     """Get list of locality options for a state. Returns serializable dicts."""
     localities = get_gpci_by_state(state, year)
