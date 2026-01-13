@@ -12,6 +12,7 @@ import pandas as pd
 from cms_rates.config import get_default_year, ensure_data_dirs
 from cms_rates.data.storage import (
     has_data,
+    has_payment_data,
     init_database,
     search_by_description,
     clear_rvu_data,
@@ -23,6 +24,7 @@ from cms_rates.data.storage import (
     get_all_payers,
     insert_payer_rate,
     delete_payer_rates,
+    get_payment_localities_by_state,
 )
 from cms_rates.data.downloader import download_rvu_file
 from cms_rates.data.parser import parse_rvu_file
@@ -44,6 +46,10 @@ def load_data(year: int) -> bool:
     """Download and load CMS data if not present. Cached to run only once."""
     ensure_data_dirs()
     init_database()
+
+    # Check if payment amount data exists (preferred for 2026+)
+    if has_payment_data(year):
+        return True
 
     # Always ensure GPCI data is loaded (use embedded data)
     gpci_loaded = False
@@ -80,6 +86,20 @@ def load_data(year: int) -> bool:
 
 def get_locality_options_for_state(state: str, year: int) -> list:
     """Get list of locality options for a state. Returns serializable dicts."""
+
+    # First try to get localities from payment data (2026+)
+    if has_payment_data(year):
+        payment_localities = get_payment_localities_by_state(state, year)
+        if payment_localities:
+            return [
+                {
+                    "name": loc.get("locality_name") or f"Locality {loc['locality']}",
+                    "carrier": loc["carrier"],
+                    "locality": loc["locality"],
+                    "label": f"{loc.get('locality_name') or 'Locality ' + loc['locality']} ({loc['carrier']}-{loc['locality']})"
+                }
+                for loc in payment_localities
+            ]
 
     # Hardcoded locality data to ensure it always works
     LOCALITIES: dict = {
@@ -184,14 +204,14 @@ def get_locality_options_for_state(state: str, year: int) -> list:
         "SD": [("00952", "02", "South Dakota")],
         "TN": [("10212", "35", "Tennessee")],
         "TX": [
-            ("00900", "09", "Austin, TX"),
-            ("00900", "11", "Beaumont, TX"),
-            ("00900", "20", "Brazoria, TX"),
-            ("00900", "18", "Dallas, TX"),
-            ("00900", "31", "Fort Worth, TX"),
-            ("00900", "15", "Galveston, TX"),
-            ("00900", "17", "Houston, TX"),
-            ("00900", "99", "Rest of Texas"),
+            ("04412", "31", "Austin, TX"),
+            ("04412", "20", "Beaumont, TX"),
+            ("04412", "09", "Brazoria, TX"),
+            ("04412", "11", "Dallas, TX"),
+            ("04412", "28", "Fort Worth, TX"),
+            ("04412", "15", "Galveston, TX"),
+            ("04412", "18", "Houston, TX"),
+            ("04412", "99", "Rest of Texas"),
         ],
         "UT": [("03102", "09", "Utah")],
         "VT": [("31143", "50", "Vermont")],
@@ -342,24 +362,31 @@ def display_results(results, show_breakdown, show_all_localities):
         st.markdown(f"**Description:** {result.description}")
         st.markdown(f"**Locality:** {result.locality_name} ({result.carrier_locality})")
 
-        # Calculation breakdown
+        # Calculation breakdown (only show if we have RVU data)
         if show_breakdown:
-            st.markdown("---")
-            st.markdown("**Calculation Breakdown**")
-
             b = result.breakdown
-            breakdown_data = {
-                "Component": ["Work", "Practice Expense", "Malpractice", "**Total**"],
-                "RVU": [f"{b.work_rvu:.2f}", f"{b.pe_rvu:.2f}", f"{b.mp_rvu:.2f}", ""],
-                "GPCI": [f"{b.work_gpci:.3f}", f"{b.pe_gpci:.3f}", f"{b.mp_gpci:.3f}", ""],
-                "Adjusted": [f"{b.work_adjusted:.4f}", f"{b.pe_adjusted:.4f}", f"{b.mp_adjusted:.4f}", f"**{b.total_adjusted_rvu:.4f}**"],
-            }
+            # Check if this is pre-calculated (no RVU data) or calculated
+            has_rvu_data = b.total_adjusted_rvu > 0
 
-            df = pd.DataFrame(breakdown_data)
-            st.table(df)
+            if has_rvu_data:
+                st.markdown("---")
+                st.markdown("**Calculation Breakdown**")
 
-            st.markdown(f"**Conversion Factor:** ${b.conversion_factor:.4f}")
-            st.markdown(f"**Formula:** {b.total_adjusted_rvu:.4f} × ${b.conversion_factor:.4f} = **${b.payment_amount:.2f}**")
+                breakdown_data = {
+                    "Component": ["Work", "Practice Expense", "Malpractice", "**Total**"],
+                    "RVU": [f"{b.work_rvu:.2f}", f"{b.pe_rvu:.2f}", f"{b.mp_rvu:.2f}", ""],
+                    "GPCI": [f"{b.work_gpci:.3f}", f"{b.pe_gpci:.3f}", f"{b.mp_gpci:.3f}", ""],
+                    "Adjusted": [f"{b.work_adjusted:.4f}", f"{b.pe_adjusted:.4f}", f"{b.mp_adjusted:.4f}", f"**{b.total_adjusted_rvu:.4f}**"],
+                }
+
+                df = pd.DataFrame(breakdown_data)
+                st.table(df)
+
+                st.markdown(f"**Conversion Factor:** ${b.conversion_factor:.4f}")
+                st.markdown(f"**Formula:** {b.total_adjusted_rvu:.4f} × ${b.conversion_factor:.4f} = **${b.payment_amount:.2f}**")
+            else:
+                st.markdown("---")
+                st.info("💡 This rate is a pre-calculated CMS payment amount (no RVU breakdown available).")
 
         if show_all_localities and i < len(results) - 1:
             st.markdown("---")
@@ -477,7 +504,7 @@ with tab2:
                             "Description": result.description,
                             "Locality": result.locality_name,
                             "Payment": f"${result.payment_amount:.2f}",
-                            "Work RVU": f"{result.breakdown.work_rvu:.2f}",
+                            "Work RVU": f"{result.breakdown.work_rvu:.2f}" if result.breakdown.work_rvu > 0 else "N/A",
                             "Setting": "Facility" if result.facility else "Non-Facility",
                         })
                 except Exception as e:
@@ -552,7 +579,7 @@ with tab3:
                         "Code": rvu.hcpcs_code,
                         "Description": rvu.description,
                         "Locality": locality,
-                        "Work RVU": f"{rvu.work_rvu:.2f}",
+                        "Work RVU": f"{rvu.work_rvu:.2f}" if rvu.work_rvu > 0 else "N/A",
                         "Payment": payment,
                     })
 
@@ -880,11 +907,11 @@ st.markdown("""
 # Sidebar info
 st.sidebar.markdown("---")
 st.sidebar.markdown("### About")
-st.sidebar.markdown("""
+st.sidebar.markdown(f"""
 This tool looks up Medicare reimbursement rates from the
 CMS Physician Fee Schedule.
 
-**Data Year:** 2025
+**Data Year:** {year}
 
 **Conversion Factor:** $32.3465
 """)

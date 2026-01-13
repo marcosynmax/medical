@@ -24,6 +24,10 @@ from cms_rates.data.storage import (
     get_payer_rates,
     get_all_payers,
     delete_payer_rates,
+    clear_payment_amounts,
+    insert_payment_records,
+    has_payment_data,
+    get_payment_localities,
 )
 from cms_rates.services.lookup import (
     RateLookup,
@@ -574,9 +578,9 @@ def compare(
 
     year = year or get_default_year()
 
-    if not has_data(year):
+    if not has_data(year) and not has_payment_data(year):
         console.print(f"[red]No CMS data available for {year}.[/red]")
-        console.print(f"Run 'cms-rates update --year {year}' to download data.")
+        console.print(f"Run 'cms-rates update --year {year}' or 'cms-rates import-payment-file' to load data.")
         sys.exit(1)
 
     # Get Medicare rate first
@@ -868,6 +872,72 @@ def import_payer_rates(
     init_database()
     count = insert_payer_rates(iter(rates_to_import))
     console.print(f"[green]Successfully imported {count} rates for '{payer}'[/green]")
+
+
+@main.command("import-payment-file")
+@click.argument("payment_file", type=click.Path(exists=True))
+@click.option("--year", "-y", type=int, default=2026, help="Fee schedule year")
+@click.option("--clear", "-c", is_flag=True, help="Clear existing payment data before import")
+def import_payment_file(
+    payment_file: str,
+    year: int,
+    clear: bool,
+):
+    """Import CMS Payment Amount File (PFALL26A format).
+
+    PAYMENT_FILE: Path to the CMS payment file (e.g., PFALL26AR.txt)
+
+    This imports pre-calculated payment amounts by carrier/locality from the
+    CMS Physician Fee Schedule Payment Amount File.
+
+    Examples:
+
+        cms-rates import-payment-file PFALL26AR.txt
+
+        cms-rates import-payment-file PFALL26AR.txt --year 2026 --clear
+    """
+    from pathlib import Path
+    from cms_rates.data.payment_parser import parse_payment_file, get_unique_localities
+    from cms_rates.models.payment import get_carrier_locality_info
+
+    file_path = Path(payment_file)
+
+    console.print(f"[cyan]Importing CMS Payment Amount File for {year}...[/cyan]")
+    ensure_data_dirs()
+    init_database()
+
+    # Build locality lookup
+    console.print("[yellow]Step 1/3:[/yellow] Analyzing localities...")
+    localities = get_unique_localities(file_path)
+    console.print(f"  Found {len(localities)} unique carrier/locality combinations")
+
+    # Build state lookup from carrier/locality mappings
+    state_lookup = {}
+    for key, (state, name) in localities.items():
+        state_lookup[key] = (state, name)
+
+    # Also use the built-in mapping for better coverage
+    for key in localities:
+        carrier, locality = key.split("-")
+        state, name = get_carrier_locality_info(carrier, locality)
+        if state != "XX":  # Override with built-in mapping if available
+            state_lookup[key] = (state, name)
+
+    if clear:
+        console.print("\n[yellow]Step 2/3:[/yellow] Clearing existing data...")
+        clear_payment_amounts(year)
+        console.print(f"  Cleared payment data for {year}")
+    else:
+        console.print("\n[yellow]Step 2/3:[/yellow] Keeping existing data...")
+
+    console.print("\n[yellow]Step 3/3:[/yellow] Importing payment records...")
+    console.print("  This may take a few minutes for large files...")
+
+    count = insert_payment_records(parse_payment_file(file_path), state_lookup)
+
+    console.print(f"\n[bold green]Successfully imported {count:,} payment records![/bold green]")
+    console.print(f"  Year: {year}")
+    console.print(f"  Localities: {len(localities)}")
 
 
 @main.command("delete-payer")

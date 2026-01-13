@@ -5,9 +5,17 @@ from decimal import Decimal
 from typing import Optional
 
 from cms_rates.config import get_default_year
-from cms_rates.data.storage import get_rvu, has_data
+from cms_rates.data.storage import (
+    get_rvu,
+    has_data,
+    has_payment_data,
+    get_payment_amount,
+    get_payment_by_state,
+    get_payment_localities_by_state,
+)
 from cms_rates.models.rvu import RVURecord
 from cms_rates.models.gpci import GPCIRecord
+from cms_rates.models.payment import PaymentRecord
 from cms_rates.services.region_mapper import RegionMapper
 from cms_rates.services.calculator import PaymentCalculator, CalculationBreakdown
 
@@ -51,8 +59,9 @@ class LookupResult:
     state: str
     payment_amount: Decimal
     breakdown: CalculationBreakdown
-    rvu: RVURecord
-    gpci: GPCIRecord
+    rvu: Optional[RVURecord] = None
+    gpci: Optional[GPCIRecord] = None
+    payment_record: Optional[PaymentRecord] = None
 
 
 class RateLookup:
@@ -122,14 +131,123 @@ class RateLookup:
             InvalidRegionError: If region cannot be resolved
             DataNotFoundError: If data not downloaded for the year
         """
+        # Validate CPT code
+        code = self.validate_cpt_code(cpt_code)
+
+        # Check if payment amount data is available (preferred)
+        if has_payment_data(self.year):
+            return self._lookup_from_payment_amounts(
+                code, region, facility, modifier, all_localities
+            )
+
+        # Fall back to RVU-based calculation
+        return self._lookup_from_rvu(code, region, facility, modifier, all_localities)
+
+    def _lookup_from_payment_amounts(
+        self,
+        code: str,
+        region: str,
+        facility: bool,
+        modifier: Optional[str],
+        all_localities: bool,
+    ) -> list[LookupResult]:
+        """Look up using pre-calculated payment amounts from PFALL file."""
+        from cms_rates.config import get_conversion_factor
+
+        # Resolve region to state
+        state = self.region_mapper.resolve_state(region)
+        if not state:
+            raise InvalidRegionError(
+                f"Region '{region}' not recognized. "
+                "Use state name (California), abbreviation (CA), or locality code (01182-99)."
+            )
+
+        # Get payment amounts for this code in the state
+        payments = get_payment_by_state(code, state, self.year, modifier)
+        if not payments:
+            raise CPTCodeNotFoundError(
+                f"CPT code {code} not found in {self.year} fee schedule for {state}."
+            )
+
+        # Try to get description from RVU data (current year or previous)
+        rvu = get_rvu(code, self.year, modifier)
+        if not rvu:
+            # Try previous year for description
+            rvu = get_rvu(code, self.year - 1, modifier)
+        description = rvu.description if rvu else f"CPT {code}"
+
+        # If not all_localities, just use the first payment record
+        if not all_localities:
+            payments = [payments[0]]
+
+        results = []
+        for payment in payments:
+            # Select fee based on facility setting
+            fee = payment.facility_fee if facility else payment.non_facility_fee
+
+            # Create a simplified breakdown
+            breakdown = CalculationBreakdown(
+                work_rvu=Decimal("0"),
+                pe_rvu=Decimal("0"),
+                mp_rvu=Decimal("0"),
+                work_gpci=Decimal("1"),
+                pe_gpci=Decimal("1"),
+                mp_gpci=Decimal("1"),
+                work_adjusted=Decimal("0"),
+                pe_adjusted=Decimal("0"),
+                mp_adjusted=Decimal("0"),
+                total_adjusted_rvu=Decimal("0"),
+                conversion_factor=Decimal(str(get_conversion_factor(self.year))),
+                payment_amount=fee,
+            )
+
+            # Get locality name from payment record or storage
+            locality_name = self._get_locality_name(payment.carrier, payment.locality, state)
+
+            results.append(LookupResult(
+                code=code,
+                modifier=payment.modifier,
+                description=description,
+                year=self.year,
+                facility=facility,
+                locality_name=locality_name,
+                carrier_locality=f"{payment.carrier}-{payment.locality}",
+                state=state,
+                payment_amount=fee,
+                breakdown=breakdown,
+                rvu=rvu,
+                gpci=None,
+                payment_record=payment,
+            ))
+
+        return results
+
+    def _get_locality_name(self, carrier: str, locality: str, state: str) -> str:
+        """Get locality name from carrier/locality codes."""
+        from cms_rates.models.payment import get_carrier_locality_info
+        _, name = get_carrier_locality_info(carrier, locality)
+        if name == f"Locality {locality}":
+            # Try to get a better name from the database
+            localities = get_payment_localities_by_state(state, self.year)
+            for loc in localities:
+                if loc["carrier"] == carrier and loc["locality"] == locality:
+                    return loc.get("locality_name") or name
+        return name
+
+    def _lookup_from_rvu(
+        self,
+        code: str,
+        region: str,
+        facility: bool,
+        modifier: Optional[str],
+        all_localities: bool,
+    ) -> list[LookupResult]:
+        """Look up using RVU-based calculation (legacy method)."""
         # Check if data is available
         if not has_data(self.year):
             raise DataNotFoundError(
                 f"Data for {self.year} not found. Run 'cms-rates update --year {self.year}' to download."
             )
-
-        # Validate CPT code
-        code = self.validate_cpt_code(cpt_code)
 
         # Get RVU data
         rvu = get_rvu(code, self.year, modifier)

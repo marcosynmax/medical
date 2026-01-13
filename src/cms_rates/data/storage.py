@@ -10,6 +10,7 @@ from cms_rates.config import get_db_path, ensure_data_dirs
 from cms_rates.models.rvu import RVURecord
 from cms_rates.models.gpci import GPCIRecord
 from cms_rates.models.payer import PayerRate
+from cms_rates.models.payment import PaymentRecord
 
 
 SCHEMA = """
@@ -84,6 +85,30 @@ CREATE INDEX IF NOT EXISTS idx_payer_hcpcs ON payer_rates(hcpcs_code);
 CREATE INDEX IF NOT EXISTS idx_payer_name ON payer_rates(payer_name);
 CREATE INDEX IF NOT EXISTS idx_payer_state ON payer_rates(state);
 CREATE INDEX IF NOT EXISTS idx_payer_year ON payer_rates(year);
+
+-- Payment amounts table (pre-calculated fees from CMS PFALL file)
+CREATE TABLE IF NOT EXISTS payment_amounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hcpcs_code TEXT NOT NULL,
+    modifier TEXT,
+    carrier TEXT NOT NULL,
+    locality TEXT NOT NULL,
+    state TEXT,
+    locality_name TEXT,
+    non_facility_fee REAL,
+    facility_fee REAL,
+    status_code TEXT,
+    pctc_indicator TEXT,
+    multiple_surgery_indicator TEXT,
+    year INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_payment_hcpcs ON payment_amounts(hcpcs_code);
+CREATE INDEX IF NOT EXISTS idx_payment_carrier_locality ON payment_amounts(carrier, locality);
+CREATE INDEX IF NOT EXISTS idx_payment_state ON payment_amounts(state);
+CREATE INDEX IF NOT EXISTS idx_payment_year ON payment_amounts(year);
+CREATE INDEX IF NOT EXISTS idx_payment_hcpcs_carrier_locality ON payment_amounts(hcpcs_code, carrier, locality);
 """
 
 
@@ -662,3 +687,290 @@ def clear_payer_rates(payer_name: Optional[str] = None, year: Optional[int] = No
             cursor = conn.execute("DELETE FROM payer_rates")
         conn.commit()
         return cursor.rowcount
+
+
+# Payment amount functions
+
+def clear_payment_amounts(year: int) -> None:
+    """Clear payment amount data for a specific year."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM payment_amounts WHERE year = ?", (year,))
+        conn.commit()
+
+
+def insert_payment_records(records: Iterator[PaymentRecord], state_lookup: dict) -> int:
+    """Insert payment records into the database.
+
+    Args:
+        records: Iterator of PaymentRecord objects
+        state_lookup: Dict mapping carrier-locality to (state, locality_name)
+
+    Returns:
+        Number of records inserted
+    """
+    count = 0
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        for record in records:
+            # Look up state and locality name
+            key = f"{record.carrier}-{record.locality}"
+            state, locality_name = state_lookup.get(key, ("XX", f"Locality {record.locality}"))
+
+            cursor.execute(
+                """
+                INSERT INTO payment_amounts (
+                    hcpcs_code, modifier, carrier, locality, state, locality_name,
+                    non_facility_fee, facility_fee, status_code, pctc_indicator,
+                    multiple_surgery_indicator, year
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.hcpcs_code,
+                    record.modifier,
+                    record.carrier,
+                    record.locality,
+                    state,
+                    locality_name,
+                    float(record.non_facility_fee),
+                    float(record.facility_fee),
+                    record.status_code,
+                    record.pctc_indicator,
+                    record.multiple_surgery_indicator,
+                    record.year,
+                ),
+            )
+            count += 1
+            if count % 10000 == 0:
+                conn.commit()
+        conn.commit()
+    return count
+
+
+def get_payment_amount(
+    hcpcs_code: str,
+    carrier: str,
+    locality: str,
+    year: int,
+    modifier: Optional[str] = None
+) -> Optional[PaymentRecord]:
+    """Get payment amount for a specific code and locality.
+
+    Args:
+        hcpcs_code: CPT or HCPCS code
+        carrier: Carrier code
+        locality: Locality code
+        year: Fee schedule year
+        modifier: Optional modifier code
+
+    Returns:
+        PaymentRecord if found, None otherwise
+    """
+    with get_connection() as conn:
+        if modifier:
+            row = conn.execute(
+                """
+                SELECT * FROM payment_amounts
+                WHERE hcpcs_code = ? AND carrier = ? AND locality = ? AND year = ? AND modifier = ?
+                LIMIT 1
+                """,
+                (hcpcs_code.upper(), carrier, locality, year, modifier.upper()),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT * FROM payment_amounts
+                WHERE hcpcs_code = ? AND carrier = ? AND locality = ? AND year = ?
+                AND (modifier IS NULL OR modifier = '')
+                LIMIT 1
+                """,
+                (hcpcs_code.upper(), carrier, locality, year),
+            ).fetchone()
+
+        if not row:
+            # Try without modifier constraint
+            row = conn.execute(
+                """
+                SELECT * FROM payment_amounts
+                WHERE hcpcs_code = ? AND carrier = ? AND locality = ? AND year = ?
+                ORDER BY modifier NULLS FIRST
+                LIMIT 1
+                """,
+                (hcpcs_code.upper(), carrier, locality, year),
+            ).fetchone()
+
+        if row:
+            return PaymentRecord(
+                hcpcs_code=row["hcpcs_code"],
+                modifier=row["modifier"],
+                carrier=row["carrier"],
+                locality=row["locality"],
+                non_facility_fee=Decimal(str(row["non_facility_fee"])),
+                facility_fee=Decimal(str(row["facility_fee"])),
+                status_code=row["status_code"],
+                pctc_indicator=row["pctc_indicator"],
+                multiple_surgery_indicator=row["multiple_surgery_indicator"],
+                year=row["year"],
+            )
+    return None
+
+
+def get_payment_by_state(
+    hcpcs_code: str,
+    state: str,
+    year: int,
+    modifier: Optional[str] = None
+) -> list[PaymentRecord]:
+    """Get payment amounts for a code in all localities of a state.
+
+    Args:
+        hcpcs_code: CPT or HCPCS code
+        state: State abbreviation
+        year: Fee schedule year
+        modifier: Optional modifier code
+
+    Returns:
+        List of PaymentRecord objects
+    """
+    results = []
+    with get_connection() as conn:
+        if modifier:
+            rows = conn.execute(
+                """
+                SELECT * FROM payment_amounts
+                WHERE hcpcs_code = ? AND state = ? AND year = ? AND modifier = ?
+                ORDER BY locality_name
+                """,
+                (hcpcs_code.upper(), state.upper(), year, modifier.upper()),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM payment_amounts
+                WHERE hcpcs_code = ? AND state = ? AND year = ?
+                AND (modifier IS NULL OR modifier = '')
+                ORDER BY locality_name
+                """,
+                (hcpcs_code.upper(), state.upper(), year),
+            ).fetchall()
+
+        for row in rows:
+            results.append(PaymentRecord(
+                hcpcs_code=row["hcpcs_code"],
+                modifier=row["modifier"],
+                carrier=row["carrier"],
+                locality=row["locality"],
+                non_facility_fee=Decimal(str(row["non_facility_fee"])),
+                facility_fee=Decimal(str(row["facility_fee"])),
+                status_code=row["status_code"],
+                pctc_indicator=row["pctc_indicator"],
+                multiple_surgery_indicator=row["multiple_surgery_indicator"],
+                year=row["year"],
+            ))
+    return results
+
+
+def get_payment_localities(year: int) -> list[dict]:
+    """Get all unique localities from payment data.
+
+    Args:
+        year: Fee schedule year
+
+    Returns:
+        List of dicts with carrier, locality, state, locality_name
+    """
+    results = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT carrier, locality, state, locality_name
+            FROM payment_amounts
+            WHERE year = ?
+            ORDER BY state, locality_name
+            """,
+            (year,),
+        ).fetchall()
+
+        for row in rows:
+            results.append({
+                "carrier": row["carrier"],
+                "locality": row["locality"],
+                "state": row["state"],
+                "locality_name": row["locality_name"],
+            })
+    return results
+
+
+def get_payment_localities_by_state(state: str, year: int) -> list[dict]:
+    """Get localities for a state from payment data.
+
+    Args:
+        state: State abbreviation
+        year: Fee schedule year
+
+    Returns:
+        List of dicts with carrier, locality, state, locality_name
+    """
+    results = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT carrier, locality, state, locality_name
+            FROM payment_amounts
+            WHERE state = ? AND year = ?
+            ORDER BY locality_name
+            """,
+            (state.upper(), year),
+        ).fetchall()
+
+        for row in rows:
+            results.append({
+                "carrier": row["carrier"],
+                "locality": row["locality"],
+                "state": row["state"],
+                "locality_name": row["locality_name"],
+            })
+    return results
+
+
+def has_payment_data(year: int) -> bool:
+    """Check if payment amount data exists for a given year."""
+    try:
+        with get_connection() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM payment_amounts WHERE year = ?", (year,)
+            ).fetchone()[0]
+        return count > 0
+    except sqlite3.OperationalError:
+        return False
+
+
+def search_payment_codes(query: str, year: int, limit: int = 50) -> list[dict]:
+    """Search for HCPCS codes in payment data.
+
+    Note: This searches by code prefix since payment file doesn't have descriptions.
+    Use RVU data for description search.
+
+    Args:
+        query: Code prefix to search
+        year: Fee schedule year
+        limit: Maximum results
+
+    Returns:
+        List of unique HCPCS codes
+    """
+    results = []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT hcpcs_code
+            FROM payment_amounts
+            WHERE year = ? AND hcpcs_code LIKE ?
+            ORDER BY hcpcs_code
+            LIMIT ?
+            """,
+            (year, f"{query.upper()}%", limit),
+        ).fetchall()
+
+        for row in rows:
+            results.append({"hcpcs_code": row["hcpcs_code"]})
+    return results

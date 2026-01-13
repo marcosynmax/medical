@@ -37,8 +37,8 @@ def get_default_year() -> int:
     """Get the default year, can be overridden by environment variable."""
     if env_year := os.environ.get("CMS_RATES_DEFAULT_YEAR"):
         return int(env_year)
-    # Default to 2025 (latest available data)
-    return 2025
+    # Default to 2026 (latest available data)
+    return 2026
 
 
 # CMS data source URLs

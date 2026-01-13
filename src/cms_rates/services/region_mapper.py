@@ -120,6 +120,34 @@ class RegionMapper:
 
         return None
 
+    def resolve_state(self, region: str) -> Optional[str]:
+        """Resolve a region input to a state abbreviation.
+
+        Args:
+            region: State name, abbreviation, or locality code
+
+        Returns:
+            State abbreviation, or None if not recognized
+        """
+        region = region.strip()
+
+        # Try as state name or abbreviation
+        state_abbrev = self.normalize_state(region)
+        if state_abbrev:
+            return state_abbrev
+
+        # Try as carrier-locality code (e.g., "01182-99")
+        # Look up the state from GPCI data
+        if "-" in region:
+            parts = region.split("-")
+            if len(parts) == 2:
+                carrier, locality = parts[0].strip(), parts[1].strip()
+                gpci = get_gpci(carrier, locality, self.year)
+                if gpci:
+                    return gpci.state
+
+        return None
+
     def resolve_region(self, region: str) -> list[GPCIRecord]:
         """Resolve a region input to GPCI records.
 
