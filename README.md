@@ -5,6 +5,7 @@ A Python tool for looking up Medicare Physician Fee Schedule reimbursement rates
 ## Features
 
 - Look up Medicare reimbursement rates by CPT/HCPCS code and state/locality
+- **Multi-code batch lookup** with summary table and total payment
 - Support for facility and non-facility rates
 - Web-based GUI for easy lookups
 - CLI with multiple output formats: table, JSON, CSV
@@ -47,7 +48,9 @@ PYTHONPATH=src streamlit run src/cms_rates/app.py
 Then open http://localhost:8501 in your browser.
 
 The GUI provides:
-- CPT code input field
+- Single code lookup with detailed breakdown
+- **Multi-code batch lookup** with summary table and total payment
+- Search CPT codes by description
 - State/region dropdown selector
 - Facility/non-facility toggle
 - Calculation breakdown display
@@ -59,33 +62,46 @@ The GUI provides:
 
 ```bash
 # Look up rate for CPT 99213 in California
-PYTHONPATH=src python3 -m cms_rates lookup 99213 CA
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r CA
 
 # Use full state name
-PYTHONPATH=src python3 -m cms_rates lookup 99213 California
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r California
 
 # Look up facility rate
-PYTHONPATH=src python3 -m cms_rates lookup 99213 CA --facility
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r CA --facility
+```
+
+### Multi-code lookup
+
+```bash
+# Look up multiple codes at once
+PYTHONPATH=src python3 -m cms_rates lookup 99213 99214 99215 -r CA
+
+# Get total payment for a procedure set
+PYTHONPATH=src python3 -m cms_rates lookup 99213 99214 99215 -r TX --facility
+
+# Output as JSON
+PYTHONPATH=src python3 -m cms_rates lookup 99213 99214 -r NY --format json
 ```
 
 ### Output formats
 
 ```bash
 # JSON output
-PYTHONPATH=src python3 -m cms_rates lookup 99213 CA --format json
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r CA --format json
 
 # CSV output
-PYTHONPATH=src python3 -m cms_rates lookup 99213 TX --format csv
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r TX --format csv
 
 # Verbose output with calculation breakdown
-PYTHONPATH=src python3 -m cms_rates lookup 99213 NY --verbose
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r NY --verbose
 ```
 
 ### View all localities in a state
 
 ```bash
 # Show rates for all California localities
-PYTHONPATH=src python3 -m cms_rates lookup 99213 CA --all-localities
+PYTHONPATH=src python3 -m cms_rates lookup 99213 -r CA --all-localities
 ```
 
 ### List available localities
@@ -120,7 +136,7 @@ PYTHONPATH=src python3 -m cms_rates search "MRI" --format json
 ## Example Output
 
 ```
-$ PYTHONPATH=src python3 -m cms_rates lookup 99213 CA --verbose
+$ PYTHONPATH=src python3 -m cms_rates lookup 99213 -r CA --verbose
 
 ╭──────────────────────────────────────────────────────────────────╮
 │ Medicare Physician Fee Schedule - CPT 99213                      │
@@ -148,7 +164,7 @@ Final Payment: $2.7873 × $32.3465 = $90.16
 
 | Command | Description |
 |---------|-------------|
-| `lookup <CPT> <REGION>` | Look up reimbursement rate |
+| `lookup <CPT...> -r <REGION>` | Look up reimbursement rate (supports multiple codes) |
 | `search <QUERY>` | Search CPT codes by description |
 | `update` | Download/update CMS fee schedule data |
 | `list-localities` | List all available localities |
@@ -160,12 +176,15 @@ Final Payment: $2.7873 × $32.3465 = $90.16
 
 | Option | Description |
 |--------|-------------|
+| `--region, -r` | State name, abbreviation, or locality code (required) |
 | `--year, -y` | Fee schedule year (default: 2025) |
 | `--facility, -f` | Show facility rate (default: non-facility) |
 | `--modifier, -m` | Modifier code (TC, 26, etc.) |
 | `--format, -o` | Output format: table, json, csv |
 | `--all-localities` | Show rates for all localities in region |
 | `--verbose, -v` | Show calculation breakdown |
+
+Note: Multiple CPT codes can be provided as arguments for batch lookup.
 
 ## Data Sources
 
