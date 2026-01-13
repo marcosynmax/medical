@@ -18,6 +18,7 @@ from cms_rates.data.storage import (
     clear_gpci_data,
     insert_rvu_records,
     insert_gpci_records,
+    get_gpci_by_state,
 )
 from cms_rates.data.downloader import download_rvu_file
 from cms_rates.data.parser import parse_rvu_file
@@ -55,6 +56,68 @@ def load_data(year: int) -> bool:
     insert_gpci_records(get_embedded_gpci_records(year))
 
     return True
+
+
+@st.cache_data
+def get_localities_for_state(state: str, year: int) -> list:
+    """Get list of localities for a state. Cached for performance."""
+    localities = get_gpci_by_state(state, year)
+    return localities
+
+
+def render_region_selector(key_prefix: str, year: int):
+    """Render state and locality selection dropdowns.
+
+    Returns:
+        tuple: (carrier_locality, locality_name) or (state_code, None) if no specific locality
+    """
+    states = sorted(STATE_NAMES.keys())
+    state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        selected_state = st.selectbox(
+            "State",
+            options=state_options,
+            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
+            help="Select a state",
+            key=f"{key_prefix}_state"
+        )
+        state_code = selected_state.split("(")[1].replace(")", "").strip()
+
+    with col2:
+        # Get localities for selected state
+        localities = get_localities_for_state(state_code, year)
+
+        if localities and len(localities) > 1:
+            locality_options = ["All localities"] + [
+                f"{loc.locality_name} ({loc.carrier}-{loc.locality})"
+                for loc in localities
+            ]
+            selected_locality = st.selectbox(
+                "Locality",
+                options=locality_options,
+                index=0,
+                help="Select a specific locality or 'All localities'",
+                key=f"{key_prefix}_locality"
+            )
+
+            if selected_locality == "All localities":
+                return state_code, None, True  # Return state code and flag for all localities
+            else:
+                # Parse the carrier-locality from the selection
+                carrier_locality = selected_locality.split("(")[1].replace(")", "").strip()
+                locality_name = selected_locality.split("(")[0].strip()
+                return carrier_locality, locality_name, False
+        elif localities:
+            # Only one locality
+            loc = localities[0]
+            st.info(f"Locality: {loc.locality_name}")
+            return f"{loc.carrier}-{loc.locality}", loc.locality_name, False
+        else:
+            st.warning("No localities found for this state")
+            return state_code, None, False
 
 
 def display_results(results, show_breakdown, show_all_localities):
@@ -138,32 +201,17 @@ show_all_localities = st.sidebar.checkbox("Show All Localities", value=False, he
 # Create tabs
 tab1, tab2, tab3 = st.tabs(["🔍 Single Code Lookup", "📋 Multi-Code Lookup", "📝 Search by Description"])
 
-# Create state options (shared)
-states = sorted(STATE_NAMES.keys())
-state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
-
 # Tab 1: Single Code Lookup
 with tab1:
-    col1, col2 = st.columns(2)
+    cpt_code = st.text_input(
+        "CPT/HCPCS Code",
+        value="99213",
+        max_chars=5,
+        help="Enter a 5-character CPT or HCPCS code (e.g., 99213, G0438)",
+        key="cpt_input"
+    )
 
-    with col1:
-        cpt_code = st.text_input(
-            "CPT/HCPCS Code",
-            value="99213",
-            max_chars=5,
-            help="Enter a 5-character CPT or HCPCS code (e.g., 99213, G0438)",
-            key="cpt_input"
-        )
-
-    with col2:
-        selected_state = st.selectbox(
-            "State/Region",
-            options=state_options,
-            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
-            help="Select a state to look up rates",
-            key="state_select_1"
-        )
-        region = selected_state.split("(")[1].replace(")", "").strip()
+    region, locality_name, all_locs = render_region_selector("single", year)
 
     if st.button("🔍 Look Up Rate", type="primary", key="lookup_btn"):
         try:
@@ -172,11 +220,11 @@ with tab1:
                 cpt_code=cpt_code,
                 region=region,
                 facility=facility,
-                all_localities=show_all_localities,
+                all_localities=all_locs or show_all_localities,
             )
 
             if results:
-                display_results(results, show_breakdown, show_all_localities)
+                display_results(results, show_breakdown, all_locs or show_all_localities)
 
         except InvalidCPTCodeError as e:
             st.error(f"❌ Invalid CPT Code: {e}")
@@ -193,26 +241,15 @@ with tab1:
 with tab2:
     st.markdown("Enter multiple CPT codes to look up rates for all of them at once.")
 
-    col1, col2 = st.columns(2)
+    cpt_codes_input = st.text_area(
+        "CPT/HCPCS Codes (one per line or comma-separated)",
+        value="99213\n99214\n99215",
+        height=150,
+        help="Enter multiple CPT codes, one per line or separated by commas",
+        key="multi_cpt_input"
+    )
 
-    with col1:
-        cpt_codes_input = st.text_area(
-            "CPT/HCPCS Codes (one per line or comma-separated)",
-            value="99213\n99214\n99215",
-            height=150,
-            help="Enter multiple CPT codes, one per line or separated by commas",
-            key="multi_cpt_input"
-        )
-
-    with col2:
-        selected_state_multi = st.selectbox(
-            "State/Region",
-            options=state_options,
-            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
-            help="Select a state to look up rates",
-            key="state_select_multi"
-        )
-        region_multi = selected_state_multi.split("(")[1].replace(")", "").strip()
+    region_multi, locality_name_multi, all_locs_multi = render_region_selector("multi", year)
 
     if st.button("🔍 Look Up All Rates", type="primary", key="multi_lookup_btn"):
         # Parse the input - handle newlines and commas
@@ -235,13 +272,16 @@ with tab2:
                         cpt_code=code,
                         region=region_multi,
                         facility=facility,
+                        all_localities=all_locs_multi,
                     )
                     if results:
+                        # If all localities, take first one for summary
                         result = results[0]
                         all_results.append(result)
                         summary_data.append({
                             "Code": result.code,
                             "Description": result.description,
+                            "Locality": result.locality_name,
                             "Payment": f"${result.payment_amount:.2f}",
                             "Work RVU": f"{result.breakdown.work_rvu:.2f}",
                             "Setting": "Facility" if result.facility else "Non-Facility",
@@ -281,19 +321,9 @@ with tab3:
         key="search_input"
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        selected_state_search = st.selectbox(
-            "State/Region for Pricing",
-            options=state_options,
-            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
-            help="Select a state to show rates",
-            key="state_select_2"
-        )
-        region_search = selected_state_search.split("(")[1].replace(")", "").strip()
+    region_search, locality_name_search, all_locs_search = render_region_selector("search", year)
 
-    with col2:
-        max_results = st.slider("Max Results", min_value=10, max_value=100, value=25, key="max_results")
+    max_results = st.slider("Max Results", min_value=10, max_value=100, value=25, key="max_results")
 
     if st.button("🔍 Search", type="primary", key="search_btn"):
         if search_query:
@@ -316,27 +346,32 @@ with tab3:
                         )
                         if rate_results:
                             payment = f"${rate_results[0].payment_amount:.2f}"
+                            locality = rate_results[0].locality_name
                         else:
                             payment = "N/A"
+                            locality = "N/A"
                     except:
                         payment = "N/A"
+                        locality = "N/A"
 
                     data.append({
                         "Code": rvu.hcpcs_code,
                         "Description": rvu.description,
+                        "Locality": locality,
                         "Work RVU": f"{rvu.work_rvu:.2f}",
                         "Payment": payment,
                     })
 
                 df = pd.DataFrame(data)
 
-                # Make the code column clickable (store selection)
+                # Display results table
                 st.dataframe(
                     df,
                     hide_index=True,
                     column_config={
                         "Code": st.column_config.TextColumn("Code", width="small"),
-                        "Description": st.column_config.TextColumn("Description", width="large"),
+                        "Description": st.column_config.TextColumn("Description", width="medium"),
+                        "Locality": st.column_config.TextColumn("Locality", width="medium"),
                         "Work RVU": st.column_config.TextColumn("Work RVU", width="small"),
                         "Payment": st.column_config.TextColumn("Payment", width="small"),
                     }
