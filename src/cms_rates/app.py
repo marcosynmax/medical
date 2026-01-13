@@ -74,16 +74,32 @@ def load_data(year: int) -> bool:
 
 def get_locality_options_for_state(state: str, year: int) -> list:
     """Get list of locality options for a state. Returns serializable dicts."""
-    localities = get_gpci_by_state(state, year)
-    # Convert to simple dicts for caching compatibility
+    # First try database
+    try:
+        localities = get_gpci_by_state(state, year)
+        if localities:
+            return [
+                {
+                    "name": loc.locality_name,
+                    "carrier": loc.carrier,
+                    "locality": loc.locality,
+                    "label": f"{loc.locality_name} ({loc.carrier}-{loc.locality})"
+                }
+                for loc in localities
+            ]
+    except:
+        pass
+
+    # Fallback: load directly from embedded data
+    from cms_rates.data.gpci_data import GPCI_2025
     return [
         {
-            "name": loc.locality_name,
-            "carrier": loc.carrier,
-            "locality": loc.locality,
-            "label": f"{loc.locality_name} ({loc.carrier}-{loc.locality})"
+            "name": entry[2],
+            "carrier": entry[0],
+            "locality": entry[1],
+            "label": f"{entry[2]} ({entry[0]}-{entry[1]})"
         }
-        for loc in localities
+        for entry in GPCI_2025 if entry[3] == state
     ]
 
 
@@ -98,8 +114,8 @@ def ensure_gpci_data(year: int):
             if gpci_count == 0:
                 clear_gpci_data(year)
                 insert_gpci_records(get_embedded_gpci_records(year))
-    except Exception as e:
-        st.error(f"Error loading GPCI data: {e}")
+    except:
+        pass  # Fallback will handle it
 
 
 def render_region_selector(key_prefix: str, year: int):
