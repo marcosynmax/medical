@@ -251,11 +251,14 @@ def render_region_selector(key_prefix: str, year: int):
     state_name_lookup = {v: k.title() for k, v in STATE_NAMES.items()}  # CA -> California
     state_options = [f"{abbr} - {state_name_lookup[abbr]}" for abbr in state_abbrevs]
 
-    # State selection
+    # State selection - default to Texas
+    default_state = "TX - Texas"
+    default_state_index = state_options.index(default_state) if default_state in state_options else 0
+
     selected_state = st.selectbox(
         "State",
         options=state_options,
-        index=state_options.index("CA - California") if "CA - California" in state_options else 0,
+        index=default_state_index,
         help="Select a state",
         key=f"{key_prefix}_state"
     )
@@ -274,10 +277,18 @@ def render_region_selector(key_prefix: str, year: int):
         else:
             options = locality_labels
 
+        # Default to Houston if Texas is selected, otherwise first option
+        default_locality_index = 0
+        if state_code == "TX":
+            for i, label in enumerate(options):
+                if "Houston" in label:
+                    default_locality_index = i
+                    break
+
         selected_locality = st.selectbox(
             "Locality",
             options=options,
-            index=0,
+            index=default_locality_index,
             help=f"Select a locality ({len(localities)} available)",
             key=f"{key_prefix}_locality"
         )
