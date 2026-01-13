@@ -149,6 +149,8 @@ def compare_rates(
     state: str,
     year: int,
     facility: bool = False,
+    carrier: Optional[str] = None,
+    locality: Optional[str] = None,
 ) -> list[RateComparison]:
     """Compare Medicare rate with all payer rates.
 
@@ -157,20 +159,31 @@ def compare_rates(
         state: State abbreviation
         year: Fee schedule year
         facility: If True, use facility rates
+        carrier: Optional carrier code for specific locality
+        locality: Optional locality code for specific locality
 
     Returns:
         List of RateComparison objects (Medicare first, then payers)
     """
+    from rate_compare.services.lookup import get_medicare_rate
+
     results = []
 
     # Get Medicare rate
-    medicare_rates = get_medicare_rates_by_state(hcpcs_code, state, year)
+    if carrier and locality:
+        # Use specific locality
+        medicare = get_medicare_rate(hcpcs_code, carrier, locality, year)
+        medicare_rates = [medicare] if medicare else []
+    else:
+        # Use first locality in state
+        medicare_rates = get_medicare_rates_by_state(hcpcs_code, state, year)
+
     if medicare_rates:
-        medicare = medicare_rates[0]  # Use first locality
+        medicare = medicare_rates[0]
         medicare_fee = medicare.facility_fee if facility else medicare.non_facility_fee
 
         results.append(RateComparison(
-            payer_name="Medicare (CMS)",
+            payer_name=f"Medicare ({medicare.locality_name})",
             payer_type="government",
             non_facility_fee=medicare.non_facility_fee,
             facility_fee=medicare.facility_fee,

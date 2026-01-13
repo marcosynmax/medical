@@ -136,16 +136,38 @@ with tab2:
                 states = STATES
 
             state = st.selectbox("State", states, key="compare_state")
+
+            # Locality dropdown
+            localities = get_localities_by_state(state, year)
+            locality_info = None
+            if localities:
+                locality_options = {
+                    f"{loc['locality_name']} ({loc['carrier']}-{loc['locality']})": loc
+                    for loc in localities
+                }
+                selected_locality = st.selectbox(
+                    "Locality",
+                    options=list(locality_options.keys()),
+                    key="compare_locality"
+                )
+                locality_info = locality_options[selected_locality]
+
             cpt_code = st.text_input("CPT/HCPCS Code", placeholder="99213", key="compare_code")
             facility = st.checkbox("Facility Rates", key="compare_facility")
 
             if st.button("Compare Rates", type="primary"):
                 if cpt_code:
-                    comparisons = compare_rates(cpt_code, state, year, facility)
+                    # Pass locality info if available
+                    carrier = locality_info["carrier"] if locality_info else None
+                    locality = locality_info["locality"] if locality_info else None
+
+                    comparisons = compare_rates(cpt_code, state, year, facility, carrier, locality)
 
                     if comparisons:
                         with col2:
-                            st.subheader(f"Rate Comparison for {cpt_code} in {state}")
+                            locality_name = locality_info["locality_name"] if locality_info else state
+                            st.subheader(f"Rate Comparison for {cpt_code}")
+                            st.caption(f"{locality_name} | {'Facility' if facility else 'Non-Facility'} | {year}")
 
                             # Build comparison table
                             data = []
