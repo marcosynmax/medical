@@ -154,6 +154,15 @@ class RateLookup:
         """Look up using pre-calculated payment amounts from PFALL file."""
         from cms_rates.config import get_conversion_factor
 
+        # Check if region is a specific carrier-locality code (e.g., "01182-18")
+        specific_carrier = None
+        specific_locality = None
+        if "-" in region:
+            parts = region.split("-")
+            if len(parts) == 2:
+                specific_carrier = parts[0].strip()
+                specific_locality = parts[1].strip()
+
         # Resolve region to state
         state = self.region_mapper.resolve_state(region)
         if not state:
@@ -162,12 +171,23 @@ class RateLookup:
                 "Use state name (California), abbreviation (CA), or locality code (01182-99)."
             )
 
-        # Get payment amounts for this code in the state
-        payments = get_payment_by_state(code, state, self.year, modifier)
-        if not payments:
-            raise CPTCodeNotFoundError(
-                f"CPT code {code} not found in {self.year} fee schedule for {state}."
-            )
+        # Get payment amounts for this code
+        if specific_carrier and specific_locality:
+            # Look up specific locality
+            payment = get_payment_amount(code, specific_carrier, specific_locality, self.year, modifier)
+            if payment:
+                payments = [payment]
+            else:
+                raise CPTCodeNotFoundError(
+                    f"CPT code {code} not found in {self.year} fee schedule for locality {region}."
+                )
+        else:
+            # Get all payments for the state
+            payments = get_payment_by_state(code, state, self.year, modifier)
+            if not payments:
+                raise CPTCodeNotFoundError(
+                    f"CPT code {code} not found in {self.year} fee schedule for {state}."
+                )
 
         # Try to get description from RVU data (current year or previous)
         rvu = get_rvu(code, self.year, modifier)
@@ -177,7 +197,7 @@ class RateLookup:
         description = rvu.description if rvu else f"CPT {code}"
 
         # If not all_localities, just use the first payment record
-        if not all_localities:
+        if not all_localities and not (specific_carrier and specific_locality):
             payments = [payments[0]]
 
         results = []

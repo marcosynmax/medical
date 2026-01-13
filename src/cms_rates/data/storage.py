@@ -944,6 +944,32 @@ def has_payment_data(year: int) -> bool:
         return False
 
 
+def get_state_from_payment_locality(carrier: str, locality: str, year: int) -> Optional[str]:
+    """Get the state for a carrier/locality code from payment data.
+
+    Args:
+        carrier: Carrier code (e.g., "01182")
+        locality: Locality code (e.g., "99")
+        year: Fee schedule year
+
+    Returns:
+        State abbreviation, or None if not found
+    """
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT state FROM payment_amounts
+                WHERE carrier = ? AND locality = ? AND year = ?
+                LIMIT 1
+                """,
+                (carrier, locality, year),
+            ).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        return None
+
+
 def search_payment_codes(query: str, year: int, limit: int = 50) -> list[dict]:
     """Search for HCPCS codes in payment data.
 

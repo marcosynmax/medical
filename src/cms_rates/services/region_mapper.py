@@ -3,7 +3,7 @@
 from typing import Optional
 
 from cms_rates.models.gpci import GPCIRecord
-from cms_rates.data.storage import get_gpci, get_gpci_by_state, get_all_localities
+from cms_rates.data.storage import get_gpci, get_gpci_by_state, get_all_localities, get_state_from_payment_locality
 
 
 # State name to abbreviation mapping
@@ -137,14 +137,18 @@ class RegionMapper:
             return state_abbrev
 
         # Try as carrier-locality code (e.g., "01182-99")
-        # Look up the state from GPCI data
         if "-" in region:
             parts = region.split("-")
             if len(parts) == 2:
                 carrier, locality = parts[0].strip(), parts[1].strip()
+                # Try GPCI data first
                 gpci = get_gpci(carrier, locality, self.year)
                 if gpci:
                     return gpci.state
+                # Fall back to payment data
+                state = get_state_from_payment_locality(carrier, locality, self.year)
+                if state:
+                    return state
 
         return None
 
