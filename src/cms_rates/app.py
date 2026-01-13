@@ -87,12 +87,30 @@ def get_locality_options_for_state(state: str, year: int) -> list:
     ]
 
 
+def ensure_gpci_data(year: int):
+    """Ensure GPCI data is loaded. Called on every render to guarantee data exists."""
+    try:
+        from cms_rates.data.storage import get_connection
+        with get_connection() as conn:
+            gpci_count = conn.execute(
+                "SELECT COUNT(*) FROM gpci WHERE year = ?", (year,)
+            ).fetchone()[0]
+            if gpci_count == 0:
+                clear_gpci_data(year)
+                insert_gpci_records(get_embedded_gpci_records(year))
+    except Exception as e:
+        st.error(f"Error loading GPCI data: {e}")
+
+
 def render_region_selector(key_prefix: str, year: int):
     """Render state and locality selection dropdowns.
 
     Returns:
         tuple: (region, locality_name, all_localities_flag)
     """
+    # Ensure GPCI data exists before rendering
+    ensure_gpci_data(year)
+
     states = sorted(STATE_NAMES.keys())
     state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
 
