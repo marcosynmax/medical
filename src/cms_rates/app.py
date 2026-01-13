@@ -127,15 +127,21 @@ def render_region_selector(key_prefix: str, year: int):
     # Get localities for selected state
     localities = get_locality_options_for_state(state_code, year)
 
-    # Locality selection - always show if localities exist
-    if localities and len(localities) > 1:
-        # Multiple localities - show dropdown with "All" option
+    # Always show locality dropdown
+    if localities:
         locality_labels = [loc["label"] for loc in localities]
+
+        # Build options list
+        if len(localities) > 1:
+            options = ["All localities in " + state_code] + locality_labels
+        else:
+            options = locality_labels
+
         selected_locality = st.selectbox(
             "Locality",
-            options=["All localities in " + state_code] + locality_labels,
+            options=options,
             index=0,
-            help="Select a specific locality within the state",
+            help=f"Select a locality ({len(localities)} available)",
             key=f"{key_prefix}_locality"
         )
 
@@ -147,16 +153,17 @@ def render_region_selector(key_prefix: str, year: int):
                 if loc["label"] == selected_locality:
                     carrier_locality = f"{loc['carrier']}-{loc['locality']}"
                     return carrier_locality, loc["name"], False
-            # Fallback
-            return state_code, None, True
-    elif localities:
-        # Single locality - show as info
-        loc = localities[0]
-        st.info(f"📍 Locality: {loc['name']}")
-        return f"{loc['carrier']}-{loc['locality']}", loc["name"], False
+            # Fallback to first locality
+            loc = localities[0]
+            return f"{loc['carrier']}-{loc['locality']}", loc["name"], False
     else:
-        # No localities found - use state code
-        st.warning(f"No locality data found for {state_code}")
+        # No localities - show placeholder dropdown
+        st.selectbox(
+            "Locality",
+            options=["No localities available"],
+            disabled=True,
+            key=f"{key_prefix}_locality"
+        )
         return state_code, None, False
 
 
