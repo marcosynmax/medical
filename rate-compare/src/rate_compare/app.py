@@ -54,7 +54,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.header("Medicare Rate Lookup")
 
-    col1, col2 = st.columns([1, 2])
+    col1, col2 = st.columns([1, 3])
 
     with col1:
         year = st.selectbox("Year", [2026, 2025, 2024], key="lookup_year")
@@ -68,64 +68,53 @@ with tab1:
                 states = STATES
 
             state = st.selectbox("State", states, key="lookup_state")
-
-            # Get localities for state
-            localities = get_localities_by_state(state, year)
-            if localities:
-                locality_options = {
-                    f"{loc['locality_name']} ({loc['carrier']}-{loc['locality']})": loc
-                    for loc in localities
-                }
-                selected_locality = st.selectbox(
-                    "Locality",
-                    options=list(locality_options.keys()),
-                    key="lookup_locality"
-                )
-                locality_info = locality_options[selected_locality]
-            else:
-                st.info("No localities found for this state.")
-                locality_info = None
-
             cpt_code = st.text_input("CPT/HCPCS Code", placeholder="99213", key="lookup_code")
             facility = st.checkbox("Facility Rate", key="lookup_facility")
 
             if st.button("Look Up Rate", type="primary"):
-                if cpt_code and locality_info:
-                    rate = get_medicare_rate(
-                        cpt_code,
-                        locality_info["carrier"],
-                        locality_info["locality"],
-                        year
-                    )
-                    if rate:
-                        with col2:
-                            st.subheader(f"Rate for {cpt_code}")
+                if cpt_code:
+                    # Get all rates for this code in the state
+                    rates = get_medicare_rates_by_state(cpt_code, state, year)
 
-                            fee = rate.facility_fee if facility else rate.non_facility_fee
-                            st.metric(
-                                "Payment Amount",
-                                f"${fee:.2f}",
-                                delta=None
+                    if rates:
+                        with col2:
+                            st.subheader(f"Rates for {cpt_code} in {state}")
+                            st.caption(f"{'Facility' if facility else 'Non-Facility'} rates for {year}")
+
+                            # Build grid data
+                            data = []
+                            for rate in rates:
+                                fee = rate.facility_fee if facility else rate.non_facility_fee
+                                data.append({
+                                    "Locality": rate.locality_name,
+                                    "Carrier-Locality": rate.carrier_locality,
+                                    "Non-Facility": f"${rate.non_facility_fee:.2f}",
+                                    "Facility": f"${rate.facility_fee:.2f}",
+                                    "Payment": f"${fee:.2f}",
+                                })
+
+                            df = pd.DataFrame(data)
+                            st.dataframe(
+                                df,
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "Locality": st.column_config.TextColumn("Locality", width="medium"),
+                                    "Carrier-Locality": st.column_config.TextColumn("Code", width="small"),
+                                    "Non-Facility": st.column_config.TextColumn("Non-Facility", width="small"),
+                                    "Facility": st.column_config.TextColumn("Facility", width="small"),
+                                    "Payment": st.column_config.TextColumn("Selected", width="small"),
+                                }
                             )
 
-                            st.write("**Details:**")
-                            details = {
-                                "HCPCS Code": rate.hcpcs_code,
-                                "Year": rate.year,
-                                "State": rate.state,
-                                "Locality": rate.locality_name,
-                                "Carrier-Locality": rate.carrier_locality,
-                                "Setting": "Facility" if facility else "Non-Facility",
-                                "Non-Facility Fee": f"${rate.non_facility_fee:.2f}",
-                                "Facility Fee": f"${rate.facility_fee:.2f}",
-                            }
-                            for key, value in details.items():
-                                st.write(f"- **{key}:** {value}")
+                            # Summary stats
+                            fees = [rate.facility_fee if facility else rate.non_facility_fee for rate in rates]
+                            st.write(f"**{len(rates)} localities** | Min: ${min(fees):.2f} | Max: ${max(fees):.2f} | Avg: ${sum(fees)/len(fees):.2f}")
                     else:
                         with col2:
-                            st.error(f"Code {cpt_code} not found in {year} fee schedule.")
+                            st.error(f"Code {cpt_code} not found in {year} fee schedule for {state}.")
                 else:
-                    st.warning("Please enter a CPT code and select a locality.")
+                    st.warning("Please enter a CPT code.")
 
 
 # ============================================================================
