@@ -9,8 +9,19 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import streamlit as st
 import pandas as pd
 
-from cms_rates.config import get_default_year
-from cms_rates.data.storage import has_data, init_database, search_by_description
+from cms_rates.config import get_default_year, ensure_data_dirs
+from cms_rates.data.storage import (
+    has_data,
+    init_database,
+    search_by_description,
+    clear_rvu_data,
+    clear_gpci_data,
+    insert_rvu_records,
+    insert_gpci_records,
+)
+from cms_rates.data.downloader import download_rvu_file
+from cms_rates.data.parser import parse_rvu_file
+from cms_rates.data.gpci_data import get_embedded_gpci_records
 from cms_rates.services.lookup import (
     RateLookup,
     InvalidCPTCodeError,
@@ -19,6 +30,31 @@ from cms_rates.services.lookup import (
     DataNotFoundError,
 )
 from cms_rates.services.region_mapper import RegionMapper, STATE_NAMES
+
+
+@st.cache_resource
+def load_data(year: int) -> bool:
+    """Download and load CMS data if not present. Cached to run only once."""
+    ensure_data_dirs()
+    init_database()
+
+    if has_data(year):
+        return True
+
+    # Download RVU file
+    rvu_file = download_rvu_file(year, "a")
+    if not rvu_file:
+        return False
+
+    # Import RVU data
+    clear_rvu_data(year)
+    insert_rvu_records(parse_rvu_file(rvu_file, year))
+
+    # Import GPCI data (use embedded data)
+    clear_gpci_data(year)
+    insert_gpci_records(get_embedded_gpci_records(year))
+
+    return True
 
 
 def display_results(results, show_breakdown, show_all_localities):
@@ -83,13 +119,14 @@ st.set_page_config(
 st.title("🏥 CMS Medicare Reimbursement Rate Lookup")
 st.markdown("Look up Medicare Physician Fee Schedule rates by CPT code and region")
 
-# Check if data is available
+# Load data (auto-downloads if not present)
 year = get_default_year()
-init_database()
 
-if not has_data(year):
-    st.error(f"⚠️ No data available for {year}. Please run the update command first:")
-    st.code(f"PYTHONPATH=src python3 -m cms_rates update --year {year}")
+with st.spinner(f"Loading CMS data for {year}... (first load may take a minute)"):
+    data_loaded = load_data(year)
+
+if not data_loaded:
+    st.error(f"⚠️ Failed to load data for {year}. Please try refreshing the page.")
     st.stop()
 
 # Sidebar for options
