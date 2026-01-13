@@ -18,6 +18,7 @@ def parse_payer_csv(
     facility_fee_column: Optional[str] = None,
     allowed_amount_column: Optional[str] = None,
     modifier_column: Optional[str] = None,
+    description_column: Optional[str] = None,
     state_column: Optional[str] = None,
     default_state: Optional[str] = None,
     source: Optional[str] = None,
@@ -34,6 +35,7 @@ def parse_payer_csv(
         facility_fee_column: Column name for facility fee (optional)
         allowed_amount_column: Column name for allowed amount (optional, used as non-facility fee)
         modifier_column: Column name for modifier (optional)
+        description_column: Column name for description (optional)
         state_column: Column name for state (optional)
         default_state: Default state if not in CSV
         source: Source description
@@ -66,6 +68,9 @@ def parse_payer_csv(
             modifier = row.get(modifier_column, "").strip() if modifier_column else None
             modifier = modifier if modifier else None
 
+            description = row.get(description_column, "").strip() if description_column else None
+            description = description if description else None
+
             state = row.get(state_column, "").strip().upper() if state_column else None
             state = state if state else default_state
 
@@ -76,6 +81,7 @@ def parse_payer_csv(
                 year=year,
                 modifier=modifier,
                 state=state,
+                description=description,
                 non_facility_fee=non_fac_fee,
                 facility_fee=fac_fee,
                 source=source,

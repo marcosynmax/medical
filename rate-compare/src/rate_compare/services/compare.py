@@ -26,10 +26,10 @@ def import_payer_data(records: Iterator[PayerRate]) -> int:
             conn.execute(
                 """
                 INSERT INTO payer_rates
-                (hcpcs_code, modifier, payer_name, payer_type, state,
+                (hcpcs_code, modifier, payer_name, payer_type, state, description,
                  non_facility_fee, facility_fee, percent_of_medicare,
                  effective_date, source, year)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.hcpcs_code,
@@ -37,6 +37,7 @@ def import_payer_data(records: Iterator[PayerRate]) -> int:
                     record.payer_name,
                     record.payer_type,
                     record.state,
+                    record.description,
                     float(record.non_facility_fee) if record.non_facility_fee else None,
                     float(record.facility_fee) if record.facility_fee else None,
                     float(record.percent_of_medicare) if record.percent_of_medicare else None,
@@ -234,6 +235,7 @@ def _row_to_payer_rate(row) -> PayerRate:
         year=row["year"],
         modifier=row["modifier"],
         state=row["state"],
+        description=row["description"] if "description" in row.keys() else None,
         non_facility_fee=Decimal(str(row["non_facility_fee"])) if row["non_facility_fee"] else None,
         facility_fee=Decimal(str(row["facility_fee"])) if row["facility_fee"] else None,
         percent_of_medicare=Decimal(str(row["percent_of_medicare"])) if row["percent_of_medicare"] else None,

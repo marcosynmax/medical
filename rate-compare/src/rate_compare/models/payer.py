@@ -15,6 +15,7 @@ class PayerRate:
     year: int
     modifier: Optional[str] = None
     state: Optional[str] = None
+    description: Optional[str] = None
     non_facility_fee: Optional[Decimal] = None
     facility_fee: Optional[Decimal] = None
     percent_of_medicare: Optional[Decimal] = None

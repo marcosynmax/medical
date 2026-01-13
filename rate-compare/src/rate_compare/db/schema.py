@@ -38,6 +38,7 @@ def create_tables(conn: sqlite3.Connection) -> None:
             payer_name TEXT NOT NULL,
             payer_type TEXT NOT NULL,
             state TEXT,
+            description TEXT,
             non_facility_fee REAL,
             facility_fee REAL,
             percent_of_medicare REAL,
@@ -47,6 +48,12 @@ def create_tables(conn: sqlite3.Connection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+
+    # Add description column if it doesn't exist (migration for existing DBs)
+    try:
+        conn.execute("ALTER TABLE payer_rates ADD COLUMN description TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_payer_hcpcs ON payer_rates(hcpcs_code)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_payer_name ON payer_rates(payer_name)")
