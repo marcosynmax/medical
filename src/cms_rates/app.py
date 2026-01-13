@@ -366,8 +366,7 @@ with st.spinner(f"Loading CMS data for {year}... (first load may take a minute)"
     data_loaded = load_data(year)
 
 if not data_loaded:
-    st.error(f"⚠️ Failed to load data for {year}. Please try refreshing the page.")
-    st.stop()
+    st.warning(f"⚠️ RVU data download in progress or failed for {year}. Some features may be limited. Try refreshing in a minute.")
 
 # Sidebar for options
 st.sidebar.header("Options")
