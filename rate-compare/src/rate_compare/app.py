@@ -290,6 +290,10 @@ with tab3:
 
                 with col2:
                     code_column = st.selectbox("HCPCS Code Column", columns)
+                    modifier_column = st.selectbox(
+                        "Modifier Column (optional)",
+                        ["(none)"] + columns
+                    )
                     fee_column = st.selectbox(
                         "Non-Facility Fee Column",
                         ["(none)"] + columns,
@@ -325,6 +329,7 @@ with tab3:
                                 fee_column=fee_column if fee_column != "(none)" else None,
                                 facility_fee_column=facility_column if facility_column != "(none)" else None,
                                 allowed_amount_column=allowed_amount_column if allowed_amount_column != "(none)" else None,
+                                modifier_column=modifier_column if modifier_column != "(none)" else None,
                                 state_column=state_column if state_column != "(none)" else None,
                                 default_state=default_state if default_state else None,
                                 source=uploaded_file.name,
