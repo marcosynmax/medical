@@ -171,6 +171,7 @@ with tab2:
 
                             # Build comparison table
                             data = []
+                            chart_data = []
                             for comp in comparisons:
                                 fee = comp.facility_fee if facility else comp.non_facility_fee
                                 data.append({
@@ -180,9 +181,20 @@ with tab2:
                                     "Facility": f"${comp.facility_fee:.2f}" if comp.facility_fee else "-",
                                     "% of Medicare": f"{comp.percent_of_medicare:.1f}%" if comp.percent_of_medicare else "-",
                                 })
+                                if fee:
+                                    chart_data.append({
+                                        "Payer": comp.payer_name,
+                                        "Rate": float(fee),
+                                    })
 
                             df = pd.DataFrame(data)
                             st.dataframe(df, use_container_width=True, hide_index=True)
+
+                            # Bar chart
+                            if chart_data:
+                                st.subheader("Rate Comparison Chart")
+                                chart_df = pd.DataFrame(chart_data)
+                                st.bar_chart(chart_df, x="Payer", y="Rate", horizontal=True)
                     else:
                         with col2:
                             st.info(f"No rates found for {cpt_code} in {state}.")
