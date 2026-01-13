@@ -99,13 +99,13 @@ show_breakdown = st.sidebar.checkbox("Show Calculation Breakdown", value=True)
 show_all_localities = st.sidebar.checkbox("Show All Localities", value=False, help="Show rates for all localities in the selected state")
 
 # Create tabs
-tab1, tab2 = st.tabs(["🔍 Lookup by Code", "📝 Search by Description"])
+tab1, tab2, tab3 = st.tabs(["🔍 Single Code Lookup", "📋 Multi-Code Lookup", "📝 Search by Description"])
 
 # Create state options (shared)
 states = sorted(STATE_NAMES.keys())
 state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
 
-# Tab 1: Lookup by Code
+# Tab 1: Single Code Lookup
 with tab1:
     col1, col2 = st.columns(2)
 
@@ -128,7 +128,7 @@ with tab1:
         )
         region = selected_state.split("(")[1].replace(")", "").strip()
 
-    if st.button("🔍 Look Up Rate", type="primary", use_container_width=True, key="lookup_btn"):
+    if st.button("🔍 Look Up Rate", type="primary", key="lookup_btn"):
         try:
             lookup_service = RateLookup(year)
             results = lookup_service.lookup(
@@ -152,8 +152,91 @@ with tab1:
         except Exception as e:
             st.error(f"❌ Error: {e}")
 
-# Tab 2: Search by Description
+# Tab 2: Multi-Code Lookup
 with tab2:
+    st.markdown("Enter multiple CPT codes to look up rates for all of them at once.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        cpt_codes_input = st.text_area(
+            "CPT/HCPCS Codes (one per line or comma-separated)",
+            value="99213\n99214\n99215",
+            height=150,
+            help="Enter multiple CPT codes, one per line or separated by commas",
+            key="multi_cpt_input"
+        )
+
+    with col2:
+        selected_state_multi = st.selectbox(
+            "State/Region",
+            options=state_options,
+            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
+            help="Select a state to look up rates",
+            key="state_select_multi"
+        )
+        region_multi = selected_state_multi.split("(")[1].replace(")", "").strip()
+
+    if st.button("🔍 Look Up All Rates", type="primary", key="multi_lookup_btn"):
+        # Parse the input - handle newlines and commas
+        raw_codes = cpt_codes_input.replace(",", "\n").split("\n")
+        cpt_codes = [code.strip() for code in raw_codes if code.strip()]
+
+        if not cpt_codes:
+            st.warning("Please enter at least one CPT code")
+        else:
+            lookup_service = RateLookup(year)
+            all_results = []
+            errors = []
+
+            # Create a summary table
+            summary_data = []
+
+            for code in cpt_codes:
+                try:
+                    results = lookup_service.lookup(
+                        cpt_code=code,
+                        region=region_multi,
+                        facility=facility,
+                    )
+                    if results:
+                        result = results[0]
+                        all_results.append(result)
+                        summary_data.append({
+                            "Code": result.code,
+                            "Description": result.description,
+                            "Payment": f"${result.payment_amount:.2f}",
+                            "Work RVU": f"{result.breakdown.work_rvu:.2f}",
+                            "Setting": "Facility" if result.facility else "Non-Facility",
+                        })
+                except Exception as e:
+                    errors.append(f"{code}: {e}")
+
+            if summary_data:
+                st.success(f"Found rates for {len(summary_data)} codes")
+
+                # Calculate total
+                total_payment = sum(r.payment_amount for r in all_results)
+
+                # Display summary table
+                df = pd.DataFrame(summary_data)
+                st.dataframe(df, hide_index=True)
+
+                # Show total
+                st.markdown(f"### 💰 Total Payment: **${total_payment:.2f}**")
+
+                # Detailed breakdown expander
+                if show_breakdown:
+                    with st.expander("📊 View Detailed Breakdown"):
+                        display_results(all_results, show_breakdown, False)
+
+            if errors:
+                with st.expander(f"⚠️ {len(errors)} errors"):
+                    for error in errors:
+                        st.error(error)
+
+# Tab 3: Search by Description
+with tab3:
     search_query = st.text_input(
         "Search Description",
         placeholder="e.g., office visit, x-ray, MRI, surgery",
@@ -175,7 +258,7 @@ with tab2:
     with col2:
         max_results = st.slider("Max Results", min_value=10, max_value=100, value=25, key="max_results")
 
-    if st.button("🔍 Search", type="primary", use_container_width=True, key="search_btn"):
+    if st.button("🔍 Search", type="primary", key="search_btn"):
         if search_query:
             results = search_by_description(search_query, year, limit=max_results)
 
@@ -213,7 +296,6 @@ with tab2:
                 # Make the code column clickable (store selection)
                 st.dataframe(
                     df,
-                    use_container_width=True,
                     hide_index=True,
                     column_config={
                         "Code": st.column_config.TextColumn("Code", width="small"),

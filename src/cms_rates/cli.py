@@ -45,8 +45,8 @@ def main():
 
 
 @main.command()
-@click.argument("cpt_code")
-@click.argument("region")
+@click.argument("cpt_codes", nargs=-1, required=True)
+@click.option("--region", "-r", required=True, help="State name, abbreviation, or locality code")
 @click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
 @click.option("--facility", "-f", is_flag=True, help="Show facility rate (default: non-facility)")
 @click.option("--modifier", "-m", default=None, help="Modifier code (TC, 26, etc.)")
@@ -59,7 +59,7 @@ def main():
 @click.option("--all-localities", is_flag=True, help="Show rates for all localities in region")
 @click.option("--verbose", "-v", is_flag=True, help="Show calculation breakdown")
 def lookup(
-    cpt_code: str,
+    cpt_codes: tuple,
     region: str,
     year: Optional[int],
     facility: bool,
@@ -68,43 +68,51 @@ def lookup(
     all_localities: bool,
     verbose: bool,
 ):
-    """Look up Medicare reimbursement rate for a CPT code and region.
+    """Look up Medicare reimbursement rates for one or more CPT codes.
 
-    CPT_CODE: 5-digit CPT or HCPCS code (e.g., 99213, G0438)
-
-    REGION: State name, abbreviation, or locality code (e.g., California, CA, 01182-99)
+    CPT_CODES: One or more 5-digit CPT or HCPCS codes (e.g., 99213 99214 99215)
 
     Examples:
 
-        cms-rates lookup 99213 California
+        cms-rates lookup 99213 -r CA
 
-        cms-rates lookup 99213 CA --facility
+        cms-rates lookup 99213 99214 99215 -r California
 
-        cms-rates lookup 99213 TX --format json
+        cms-rates lookup 99213 -r CA --facility
 
-        cms-rates lookup 99213 CA --all-localities
+        cms-rates lookup 99213 99214 -r TX --format json
+
+        cms-rates lookup 99213 -r CA --all-localities
     """
     year = year or get_default_year()
+    all_results = []
 
-    try:
-        lookup_service = RateLookup(year)
-        results = lookup_service.lookup(
-            cpt_code=cpt_code,
-            region=region,
-            facility=facility,
-            modifier=modifier,
-            all_localities=all_localities,
-        )
-    except (InvalidCPTCodeError, CPTCodeNotFoundError, InvalidRegionError, DataNotFoundError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+    lookup_service = RateLookup(year)
+
+    for cpt_code in cpt_codes:
+        try:
+            results = lookup_service.lookup(
+                cpt_code=cpt_code,
+                region=region,
+                facility=facility,
+                modifier=modifier,
+                all_localities=all_localities,
+            )
+            all_results.extend(results)
+        except (InvalidCPTCodeError, CPTCodeNotFoundError, InvalidRegionError, DataNotFoundError) as e:
+            console.print(f"[red]Error for {cpt_code}:[/red] {e}")
+            continue
+
+    if not all_results:
+        console.print("[yellow]No results found.[/yellow]")
         sys.exit(1)
 
     if output_format == "json":
-        output_json(results)
+        output_json(all_results)
     elif output_format == "csv":
-        output_csv(results)
+        output_csv(all_results)
     else:
-        output_table(results, verbose)
+        output_table(all_results, verbose)
 
 
 def output_table(results: list[LookupResult], verbose: bool = False):
