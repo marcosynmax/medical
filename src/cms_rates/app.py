@@ -143,6 +143,9 @@ def render_region_selector(key_prefix: str, year: int):
     # Get localities for selected state
     localities = get_locality_options_for_state(state_code, year)
 
+    # Debug: show locality count
+    st.caption(f"Found {len(localities)} localities for {state_code}")
+
     # Always show locality dropdown
     if localities:
         locality_labels = [loc["label"] for loc in localities]
