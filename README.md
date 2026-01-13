@@ -6,6 +6,7 @@ A Python tool for looking up Medicare Physician Fee Schedule reimbursement rates
 
 - Look up Medicare reimbursement rates by CPT/HCPCS code and state/locality
 - **Multi-code batch lookup** with summary table and total payment
+- **Multi-payer rate comparison** - Compare Medicare rates with commercial insurers and Medicaid
 - Support for facility and non-facility rates
 - Web-based GUI for easy lookups
 - CLI with multiple output formats: table, JSON, CSV
@@ -51,10 +52,12 @@ The GUI provides:
 - Single code lookup with detailed breakdown
 - **Multi-code batch lookup** with summary table and total payment
 - Search CPT codes by description
+- **Rate comparison** across Medicare, commercial insurers, and Medicaid
 - State/region dropdown selector
 - Facility/non-facility toggle
 - Calculation breakdown display
 - View all localities in a state
+- Add and manage payer rates directly in the UI
 
 ## CLI Usage
 
@@ -133,6 +136,63 @@ PYTHONPATH=src python3 -m cms_rates search "x-ray" --limit 50
 PYTHONPATH=src python3 -m cms_rates search "MRI" --format json
 ```
 
+### Payer rate comparison
+
+Compare Medicare rates with commercial insurers and Medicaid:
+
+```bash
+# Compare rates for a CPT code across all payers
+PYTHONPATH=src python3 -m cms_rates compare 99213 -r CA
+
+# Compare facility rates
+PYTHONPATH=src python3 -m cms_rates compare 99213 -r CA --facility
+
+# Output as JSON
+PYTHONPATH=src python3 -m cms_rates compare 99213 -r TX --format json
+```
+
+### Add payer rates
+
+```bash
+# Add a fixed rate for a payer
+PYTHONPATH=src python3 -m cms_rates add-payer-rate 99213 "Blue Cross CA" --rate 115.50 --state CA
+
+# Add rate as percentage of Medicare
+PYTHONPATH=src python3 -m cms_rates add-payer-rate 99213 "Aetna" --percent-medicare 120 --type commercial
+
+# Add Medicaid rate
+PYTHONPATH=src python3 -m cms_rates add-payer-rate 99213 "Medi-Cal" --rate 72.00 --state CA --type medicaid
+
+# Add with facility and non-facility rates
+PYTHONPATH=src python3 -m cms_rates add-payer-rate 99213 "Cigna" --rate 110.00 --facility-rate 85.00 --state CA
+```
+
+### Import payer rates from CSV
+
+```bash
+# Import rates from a CSV file
+PYTHONPATH=src python3 -m cms_rates import-payer-rates medicaid_rates.csv --payer "Medi-Cal" --state CA --type medicaid
+
+# Preview import without saving (dry run)
+PYTHONPATH=src python3 -m cms_rates import-payer-rates rates.csv --payer "BCBS" --dry-run
+
+# Custom column names
+PYTHONPATH=src python3 -m cms_rates import-payer-rates data.csv --payer "Aetna" --code-column "CPT" --rate-column "Amount"
+```
+
+### Manage payers
+
+```bash
+# List all payers in the database
+PYTHONPATH=src python3 -m cms_rates list-payers
+
+# List payers as JSON
+PYTHONPATH=src python3 -m cms_rates list-payers --format json
+
+# Delete payer rates
+PYTHONPATH=src python3 -m cms_rates delete-payer "Old Payer" --confirm
+```
+
 ## Example Output
 
 ```
@@ -160,12 +220,37 @@ Conversion Factor: $32.3465
 Final Payment: $2.7873 × $32.3465 = $90.16
 ```
 
+### Rate Comparison Example
+
+```
+$ PYTHONPATH=src python3 -m cms_rates compare 99213 -r CA
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ Rate Comparison - CPT 99213 (Non-Facility)                                   │
+│ Region: Anaheim/Santa Ana, CA (CA)                                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+┏━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Payer            ┃ Type       ┃    Rate ┃ % of Medicare ┃
+┡━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ Medicare (CMS)   │ government │  $99.65 │        100.0% │
+│ Aetna            │ commercial │ $109.61 │        110.0% │
+│ Blue Shield CA   │ commercial │ $114.60 │        115.0% │
+│ Medi-Cal         │ medicaid   │  $72.00 │         72.3% │
+│ UnitedHealthcare │ commercial │ $105.50 │        105.9% │
+└──────────────────┴────────────┴─────────┴───────────────┘
+```
+
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `lookup <CPT...> -r <REGION>` | Look up reimbursement rate (supports multiple codes) |
 | `search <QUERY>` | Search CPT codes by description |
+| `compare <CPT> -r <REGION>` | Compare Medicare rate with other payers |
+| `add-payer-rate <CPT> <PAYER>` | Add a payer-specific rate |
+| `import-payer-rates <CSV>` | Import payer rates from CSV file |
+| `list-payers` | List all payers in the database |
+| `delete-payer <PAYER>` | Delete rates for a payer |
 | `update` | Download/update CMS fee schedule data |
 | `list-localities` | List all available localities |
 | `info <CPT>` | Show CPT code details without pricing |

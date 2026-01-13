@@ -20,6 +20,10 @@ from cms_rates.data.storage import (
     insert_rvu_records,
     insert_gpci_records,
     has_data,
+    insert_payer_rate,
+    get_payer_rates,
+    get_all_payers,
+    delete_payer_rates,
 )
 from cms_rates.services.lookup import (
     RateLookup,
@@ -448,6 +452,465 @@ def search(query: str, year: Optional[int], limit: int, output_format: str):
             )
 
         console.print(table)
+
+
+@main.command("add-payer-rate")
+@click.argument("cpt_code")
+@click.argument("payer_name")
+@click.option("--rate", "-r", type=float, help="Non-facility reimbursement rate")
+@click.option("--facility-rate", "-fr", type=float, help="Facility reimbursement rate")
+@click.option("--percent-medicare", "-p", type=float, help="Rate as percentage of Medicare (e.g., 120 for 120%)")
+@click.option("--state", "-s", help="State abbreviation (leave empty for national rate)")
+@click.option("--type", "-t", "payer_type", type=click.Choice(["commercial", "medicaid", "other"]), default="commercial", help="Payer type")
+@click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
+@click.option("--modifier", "-m", help="Modifier code")
+@click.option("--source", help="Data source description")
+def add_payer_rate(
+    cpt_code: str,
+    payer_name: str,
+    rate: Optional[float],
+    facility_rate: Optional[float],
+    percent_medicare: Optional[float],
+    state: Optional[str],
+    payer_type: str,
+    year: Optional[int],
+    modifier: Optional[str],
+    source: Optional[str],
+):
+    """Add a payer-specific reimbursement rate.
+
+    CPT_CODE: The CPT or HCPCS code
+
+    PAYER_NAME: Name of the insurance payer (e.g., "Blue Cross CA", "Medi-Cal")
+
+    Examples:
+
+        cms-rates add-payer-rate 99213 "Blue Cross CA" --rate 115.50 --state CA
+
+        cms-rates add-payer-rate 99213 "Aetna" --percent-medicare 120 --type commercial
+
+        cms-rates add-payer-rate 99213 "Medi-Cal" --rate 72.00 --state CA --type medicaid
+    """
+    from decimal import Decimal
+    from cms_rates.models.payer import PayerRate
+
+    year = year or get_default_year()
+
+    if not rate and not facility_rate and not percent_medicare:
+        console.print("[red]Error: Must specify --rate, --facility-rate, or --percent-medicare[/red]")
+        sys.exit(1)
+
+    init_database()
+
+    payer_rate = PayerRate(
+        hcpcs_code=cpt_code.upper(),
+        payer_name=payer_name,
+        payer_type=payer_type,
+        year=year,
+        modifier=modifier.upper() if modifier else None,
+        state=state.upper() if state else None,
+        non_facility_rate=Decimal(str(rate)) if rate else None,
+        facility_rate=Decimal(str(facility_rate)) if facility_rate else None,
+        percent_of_medicare=Decimal(str(percent_medicare)) if percent_medicare else None,
+        source=source,
+    )
+
+    record_id = insert_payer_rate(payer_rate)
+    console.print(f"[green]Added payer rate for {cpt_code} from {payer_name} (ID: {record_id})[/green]")
+
+    # Show the added rate
+    table = Table(show_header=False, box=None, padding=(0, 2))
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+
+    table.add_row("CPT Code:", cpt_code.upper())
+    table.add_row("Payer:", payer_name)
+    table.add_row("Type:", payer_type)
+    table.add_row("State:", state.upper() if state else "National")
+    if rate:
+        table.add_row("Non-Facility Rate:", f"${rate:.2f}")
+    if facility_rate:
+        table.add_row("Facility Rate:", f"${facility_rate:.2f}")
+    if percent_medicare:
+        table.add_row("% of Medicare:", f"{percent_medicare:.0f}%")
+    table.add_row("Year:", str(year))
+
+    console.print(table)
+
+
+@main.command()
+@click.argument("cpt_code")
+@click.option("--region", "-r", required=True, help="State name, abbreviation, or locality code")
+@click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
+@click.option("--facility", "-f", is_flag=True, help="Show facility rates (default: non-facility)")
+@click.option("--modifier", "-m", help="Modifier code")
+@click.option(
+    "--format", "-o", "output_format",
+    type=click.Choice(["table", "json", "csv"]),
+    default="table",
+    help="Output format"
+)
+def compare(
+    cpt_code: str,
+    region: str,
+    year: Optional[int],
+    facility: bool,
+    modifier: Optional[str],
+    output_format: str,
+):
+    """Compare Medicare rates with other payers for a CPT code.
+
+    CPT_CODE: The CPT or HCPCS code to compare
+
+    Examples:
+
+        cms-rates compare 99213 -r CA
+
+        cms-rates compare 99213 -r California --facility
+
+        cms-rates compare 99213 -r TX --format json
+    """
+    from decimal import Decimal
+
+    year = year or get_default_year()
+
+    if not has_data(year):
+        console.print(f"[red]No CMS data available for {year}.[/red]")
+        console.print(f"Run 'cms-rates update --year {year}' to download data.")
+        sys.exit(1)
+
+    # Get Medicare rate first
+    lookup_service = RateLookup(year)
+    try:
+        medicare_results = lookup_service.lookup(
+            cpt_code=cpt_code,
+            region=region,
+            facility=facility,
+            modifier=modifier,
+        )
+    except (InvalidCPTCodeError, CPTCodeNotFoundError, InvalidRegionError, DataNotFoundError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+    if not medicare_results:
+        console.print(f"[red]No Medicare rate found for {cpt_code} in {region}[/red]")
+        sys.exit(1)
+
+    medicare_result = medicare_results[0]
+    medicare_rate = medicare_result.payment_amount
+
+    # Get payer rates
+    state = medicare_result.state
+    payer_rates = get_payer_rates(cpt_code, year, state=state, modifier=modifier)
+
+    # Build comparison data
+    comparison_data = [{
+        "payer": "Medicare (CMS)",
+        "type": "government",
+        "rate": float(medicare_rate),
+        "percent_medicare": 100.0,
+    }]
+
+    for pr in payer_rates:
+        rate = pr.calculate_rate_from_medicare(medicare_rate, facility)
+        if rate is not None:
+            pct = (float(rate) / float(medicare_rate)) * 100 if medicare_rate > 0 else 0
+            comparison_data.append({
+                "payer": pr.payer_name,
+                "type": pr.payer_type,
+                "rate": float(rate),
+                "percent_medicare": pct,
+            })
+
+    if output_format == "json":
+        output = {
+            "cpt_code": cpt_code,
+            "region": region,
+            "state": state,
+            "locality": medicare_result.locality_name,
+            "year": year,
+            "setting": "facility" if facility else "non_facility",
+            "rates": comparison_data,
+        }
+        print(json.dumps(output, indent=2))
+
+    elif output_format == "csv":
+        print("payer,type,rate,percent_of_medicare")
+        for item in comparison_data:
+            print(f"{item['payer']},{item['type']},{item['rate']:.2f},{item['percent_medicare']:.1f}")
+
+    else:
+        setting = "Facility" if facility else "Non-Facility"
+        console.print(Panel(
+            f"Rate Comparison - CPT {cpt_code} ({setting})\n"
+            f"Region: {medicare_result.locality_name} ({state})",
+            style="bold blue"
+        ))
+
+        table = Table()
+        table.add_column("Payer", style="cyan")
+        table.add_column("Type")
+        table.add_column("Rate", justify="right", style="green")
+        table.add_column("% of Medicare", justify="right")
+
+        for item in comparison_data:
+            pct_style = ""
+            if item["percent_medicare"] > 100:
+                pct_style = "green"
+            elif item["percent_medicare"] < 100:
+                pct_style = "red"
+
+            table.add_row(
+                item["payer"],
+                item["type"],
+                f"${item['rate']:.2f}",
+                f"[{pct_style}]{item['percent_medicare']:.1f}%[/{pct_style}]" if pct_style else f"{item['percent_medicare']:.1f}%",
+            )
+
+        console.print(table)
+
+        if len(comparison_data) == 1:
+            console.print("\n[yellow]No payer rates found for this code/region.[/yellow]")
+            console.print("Use 'cms-rates add-payer-rate' to add payer rates.")
+
+
+@main.command("list-payers")
+@click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
+@click.option(
+    "--format", "-o", "output_format",
+    type=click.Choice(["table", "json"]),
+    default="table",
+    help="Output format"
+)
+def list_payers(year: Optional[int], output_format: str):
+    """List all payers with rates in the database.
+
+    Examples:
+
+        cms-rates list-payers
+
+        cms-rates list-payers --year 2025
+
+        cms-rates list-payers --format json
+    """
+    year_filter = year or get_default_year()
+
+    payers = get_all_payers(year_filter)
+
+    if not payers:
+        console.print(f"[yellow]No payer rates found for {year_filter}.[/yellow]")
+        console.print("Use 'cms-rates add-payer-rate' to add payer rates.")
+        return
+
+    if output_format == "json":
+        print(json.dumps(payers, indent=2))
+    else:
+        table = Table(title=f"Payers in Database ({year_filter})")
+        table.add_column("Payer Name", style="cyan")
+        table.add_column("Type")
+        table.add_column("State")
+        table.add_column("# Rates", justify="right")
+
+        for p in payers:
+            table.add_row(
+                p["payer_name"],
+                p["payer_type"],
+                p["state"] or "National",
+                str(p["rate_count"]),
+            )
+
+        console.print(table)
+        console.print(f"\nTotal: {len(payers)} payer entries")
+
+
+@main.command("import-payer-rates")
+@click.argument("csv_file", type=click.Path(exists=True))
+@click.option("--payer", "-p", required=True, help="Payer name for imported rates")
+@click.option("--type", "-t", "payer_type", type=click.Choice(["commercial", "medicaid", "other"]), default="medicaid", help="Payer type")
+@click.option("--state", "-s", help="State for all imported rates (if not in CSV)")
+@click.option("--year", "-y", type=int, default=None, help="Fee schedule year")
+@click.option("--code-column", default="code", help="CSV column name for CPT code")
+@click.option("--rate-column", default="rate", help="CSV column name for rate")
+@click.option("--facility-column", help="CSV column name for facility rate")
+@click.option("--source", help="Data source description")
+@click.option("--dry-run", is_flag=True, help="Show what would be imported without importing")
+def import_payer_rates(
+    csv_file: str,
+    payer: str,
+    payer_type: str,
+    state: Optional[str],
+    year: Optional[int],
+    code_column: str,
+    rate_column: str,
+    facility_column: Optional[str],
+    source: Optional[str],
+    dry_run: bool,
+):
+    """Import payer rates from a CSV file.
+
+    CSV_FILE: Path to the CSV file to import
+
+    The CSV should have at minimum a CPT code column and a rate column.
+    Column names can be customized with options.
+
+    Examples:
+
+        cms-rates import-payer-rates medicaid_rates.csv --payer "Medi-Cal" --state CA
+
+        cms-rates import-payer-rates rates.csv --payer "BCBS" --code-column "CPT" --rate-column "Amount"
+
+        cms-rates import-payer-rates data.csv --payer "Aetna" --dry-run
+    """
+    import csv
+    from decimal import Decimal, InvalidOperation
+    from pathlib import Path
+    from cms_rates.models.payer import PayerRate
+    from cms_rates.data.storage import insert_payer_rates
+
+    year = year or get_default_year()
+
+    # Read CSV file
+    csv_path = Path(csv_file)
+    rates_to_import = []
+    errors = []
+
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+
+        # Check required columns exist
+        if code_column not in reader.fieldnames:
+            console.print(f"[red]Error: Column '{code_column}' not found in CSV[/red]")
+            console.print(f"Available columns: {', '.join(reader.fieldnames)}")
+            sys.exit(1)
+
+        if rate_column not in reader.fieldnames:
+            console.print(f"[red]Error: Column '{rate_column}' not found in CSV[/red]")
+            console.print(f"Available columns: {', '.join(reader.fieldnames)}")
+            sys.exit(1)
+
+        for row_num, row in enumerate(reader, start=2):
+            cpt_code = row.get(code_column, '').strip()
+            rate_str = row.get(rate_column, '').strip()
+
+            if not cpt_code:
+                continue
+
+            # Parse rate
+            try:
+                # Remove currency symbols and commas
+                rate_str = rate_str.replace('$', '').replace(',', '')
+                non_facility_rate = Decimal(rate_str) if rate_str else None
+            except InvalidOperation:
+                errors.append(f"Row {row_num}: Invalid rate '{rate_str}' for {cpt_code}")
+                continue
+
+            # Parse facility rate if column specified
+            facility_rate = None
+            if facility_column and facility_column in row:
+                fac_str = row.get(facility_column, '').strip()
+                try:
+                    fac_str = fac_str.replace('$', '').replace(',', '')
+                    facility_rate = Decimal(fac_str) if fac_str else None
+                except InvalidOperation:
+                    pass  # Ignore facility rate errors
+
+            # Get state from row or default
+            row_state = row.get('state', '').strip() or state
+
+            rate = PayerRate(
+                hcpcs_code=cpt_code.upper(),
+                payer_name=payer,
+                payer_type=payer_type,
+                year=year,
+                state=row_state.upper() if row_state else None,
+                non_facility_rate=non_facility_rate,
+                facility_rate=facility_rate,
+                source=source or f"Imported from {csv_path.name}",
+            )
+            rates_to_import.append(rate)
+
+    if errors:
+        console.print(f"[yellow]Warnings during parsing:[/yellow]")
+        for err in errors[:10]:  # Show first 10 errors
+            console.print(f"  {err}")
+        if len(errors) > 10:
+            console.print(f"  ... and {len(errors) - 10} more")
+        console.print()
+
+    if not rates_to_import:
+        console.print("[red]No valid rates found in CSV file[/red]")
+        sys.exit(1)
+
+    console.print(f"Found {len(rates_to_import)} rates to import for '{payer}'")
+
+    if dry_run:
+        console.print("\n[yellow]Dry run - showing first 10 rates:[/yellow]")
+        table = Table()
+        table.add_column("CPT", style="cyan")
+        table.add_column("State")
+        table.add_column("Non-Fac Rate", justify="right")
+        table.add_column("Fac Rate", justify="right")
+
+        for rate in rates_to_import[:10]:
+            table.add_row(
+                rate.hcpcs_code,
+                rate.state or "N/A",
+                f"${rate.non_facility_rate:.2f}" if rate.non_facility_rate else "-",
+                f"${rate.facility_rate:.2f}" if rate.facility_rate else "-",
+            )
+
+        console.print(table)
+        if len(rates_to_import) > 10:
+            console.print(f"\n... and {len(rates_to_import) - 10} more")
+        return
+
+    # Import rates
+    init_database()
+    count = insert_payer_rates(iter(rates_to_import))
+    console.print(f"[green]Successfully imported {count} rates for '{payer}'[/green]")
+
+
+@main.command("delete-payer")
+@click.argument("payer_name")
+@click.option("--year", "-y", type=int, help="Only delete rates for specific year")
+@click.option("--state", "-s", help="Only delete rates for specific state")
+@click.option("--confirm", "-c", is_flag=True, help="Skip confirmation prompt")
+def delete_payer(
+    payer_name: str,
+    year: Optional[int],
+    state: Optional[str],
+    confirm: bool,
+):
+    """Delete payer rates from the database.
+
+    PAYER_NAME: Name of the payer to delete rates for
+
+    Examples:
+
+        cms-rates delete-payer "Blue Cross CA"
+
+        cms-rates delete-payer "Medi-Cal" --state CA
+
+        cms-rates delete-payer "Old Payer" --confirm
+    """
+    if not confirm:
+        msg = f"Delete all rates for '{payer_name}'"
+        if year:
+            msg += f" (year {year})"
+        if state:
+            msg += f" (state {state})"
+        msg += "?"
+
+        if not click.confirm(msg):
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+
+    count = delete_payer_rates(payer_name, year=year, state=state)
+
+    if count > 0:
+        console.print(f"[green]Deleted {count} rate(s) for '{payer_name}'[/green]")
+    else:
+        console.print(f"[yellow]No rates found for '{payer_name}'[/yellow]")
 
 
 if __name__ == "__main__":

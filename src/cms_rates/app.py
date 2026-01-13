@@ -19,6 +19,10 @@ from cms_rates.data.storage import (
     insert_rvu_records,
     insert_gpci_records,
     get_gpci_by_state,
+    get_payer_rates,
+    get_all_payers,
+    insert_payer_rate,
+    delete_payer_rates,
 )
 from cms_rates.data.downloader import download_rvu_file
 from cms_rates.data.parser import parse_rvu_file
@@ -31,6 +35,8 @@ from cms_rates.services.lookup import (
     DataNotFoundError,
 )
 from cms_rates.services.region_mapper import RegionMapper, STATE_NAMES
+from cms_rates.models.payer import PayerRate
+from decimal import Decimal
 
 
 @st.cache_resource
@@ -376,7 +382,7 @@ show_breakdown = st.sidebar.checkbox("Show Calculation Breakdown", value=True)
 show_all_localities = st.sidebar.checkbox("Show All Localities", value=False, help="Show rates for all localities in the selected state")
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["🔍 Single Code Lookup", "📋 Multi-Code Lookup", "📝 Search by Description"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔍 Single Code Lookup", "📋 Multi-Code Lookup", "📝 Search by Description", "📊 Rate Comparison"])
 
 # Tab 1: Single Code Lookup
 with tab1:
@@ -559,6 +565,160 @@ with tab3:
                 st.warning(f"No CPT codes found matching '{search_query}'")
         else:
             st.warning("Please enter a search term")
+
+# Tab 4: Rate Comparison
+with tab4:
+    st.markdown("Compare Medicare rates with commercial insurers and Medicaid across different payers.")
+
+    compare_cpt = st.text_input(
+        "CPT/HCPCS Code",
+        value="99213",
+        max_chars=5,
+        help="Enter a CPT or HCPCS code to compare rates",
+        key="compare_cpt_input"
+    )
+
+    region_compare, locality_name_compare, all_locs_compare = render_region_selector("compare", year)
+
+    if st.button("📊 Compare Rates", type="primary", key="compare_btn"):
+        try:
+            lookup_service = RateLookup(year)
+            medicare_results = lookup_service.lookup(
+                cpt_code=compare_cpt,
+                region=region_compare,
+                facility=facility,
+            )
+
+            if medicare_results:
+                medicare_result = medicare_results[0]
+                medicare_rate = medicare_result.payment_amount
+                state = medicare_result.state
+
+                # Get payer rates for this code
+                payer_rates = get_payer_rates(compare_cpt, year, state=state)
+
+                # Build comparison data
+                comparison_data = [{
+                    "Payer": "Medicare (CMS)",
+                    "Type": "Government",
+                    "Rate": f"${float(medicare_rate):.2f}",
+                    "% of Medicare": "100.0%",
+                    "rate_value": float(medicare_rate),
+                }]
+
+                for pr in payer_rates:
+                    rate = pr.calculate_rate_from_medicare(medicare_rate, facility)
+                    if rate is not None:
+                        pct = (float(rate) / float(medicare_rate)) * 100 if medicare_rate > 0 else 0
+                        comparison_data.append({
+                            "Payer": pr.payer_name,
+                            "Type": pr.payer_type.title(),
+                            "Rate": f"${float(rate):.2f}",
+                            "% of Medicare": f"{pct:.1f}%",
+                            "rate_value": float(rate),
+                        })
+
+                # Display results
+                st.subheader(f"Rate Comparison for CPT {compare_cpt}")
+                st.markdown(f"**Region:** {medicare_result.locality_name} ({state})")
+                st.markdown(f"**Setting:** {'Facility' if facility else 'Non-Facility'}")
+                st.markdown("---")
+
+                # Create DataFrame for display
+                df = pd.DataFrame(comparison_data)
+                display_df = df[["Payer", "Type", "Rate", "% of Medicare"]]
+
+                # Display as styled table
+                st.dataframe(
+                    display_df,
+                    hide_index=True,
+                    column_config={
+                        "Payer": st.column_config.TextColumn("Payer", width="medium"),
+                        "Type": st.column_config.TextColumn("Type", width="small"),
+                        "Rate": st.column_config.TextColumn("Rate", width="small"),
+                        "% of Medicare": st.column_config.TextColumn("% of Medicare", width="small"),
+                    }
+                )
+
+                # Visual chart
+                if len(comparison_data) > 1:
+                    st.markdown("---")
+                    st.markdown("### Rate Comparison Chart")
+
+                    chart_data = pd.DataFrame({
+                        "Payer": [d["Payer"] for d in comparison_data],
+                        "Rate": [d["rate_value"] for d in comparison_data],
+                    })
+                    st.bar_chart(chart_data.set_index("Payer"))
+
+                if len(comparison_data) == 1:
+                    st.info("No payer rates found for this code/region. Use the sidebar to add payer rates.")
+
+        except (InvalidCPTCodeError, CPTCodeNotFoundError, InvalidRegionError, DataNotFoundError) as e:
+            st.error(f"Error: {e}")
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+    # Payer management section
+    st.markdown("---")
+    st.markdown("### Manage Payer Rates")
+
+    with st.expander("Add New Payer Rate"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            new_cpt = st.text_input("CPT Code", max_chars=5, key="new_payer_cpt")
+            new_payer = st.text_input("Payer Name", key="new_payer_name", placeholder="e.g., Blue Cross, Medi-Cal")
+            new_type = st.selectbox("Payer Type", ["commercial", "medicaid", "other"], key="new_payer_type")
+
+        with col2:
+            new_state = st.text_input("State (optional)", max_chars=2, key="new_payer_state", placeholder="e.g., CA")
+            rate_method = st.radio("Rate Method", ["Fixed Rate", "% of Medicare"], key="rate_method")
+
+            if rate_method == "Fixed Rate":
+                new_rate = st.number_input("Non-Facility Rate ($)", min_value=0.0, step=1.0, key="new_payer_rate")
+                new_fac_rate = st.number_input("Facility Rate ($) (optional)", min_value=0.0, step=1.0, key="new_payer_fac_rate")
+                new_pct = None
+            else:
+                new_rate = None
+                new_fac_rate = None
+                new_pct = st.number_input("% of Medicare", min_value=0.0, max_value=500.0, value=100.0, step=5.0, key="new_payer_pct")
+
+        if st.button("Add Payer Rate", key="add_payer_btn"):
+            if not new_cpt or not new_payer:
+                st.error("CPT Code and Payer Name are required")
+            elif rate_method == "Fixed Rate" and not new_rate and not new_fac_rate:
+                st.error("At least one rate is required")
+            elif rate_method == "% of Medicare" and not new_pct:
+                st.error("Percentage is required")
+            else:
+                try:
+                    payer_rate = PayerRate(
+                        hcpcs_code=new_cpt.upper(),
+                        payer_name=new_payer,
+                        payer_type=new_type,
+                        year=year,
+                        state=new_state.upper() if new_state else None,
+                        non_facility_rate=Decimal(str(new_rate)) if new_rate else None,
+                        facility_rate=Decimal(str(new_fac_rate)) if new_fac_rate else None,
+                        percent_of_medicare=Decimal(str(new_pct)) if new_pct else None,
+                        source="Web UI",
+                    )
+                    insert_payer_rate(payer_rate)
+                    st.success(f"Added rate for {new_cpt} from {new_payer}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error adding rate: {e}")
+
+    # Show existing payers
+    with st.expander("View Existing Payers"):
+        payers = get_all_payers(year)
+        if payers:
+            payers_df = pd.DataFrame(payers)
+            payers_df.columns = ["Payer Name", "Type", "State", "# Rates"]
+            st.dataframe(payers_df, hide_index=True)
+        else:
+            st.info("No payer rates in database yet.")
 
 
 # Footer
