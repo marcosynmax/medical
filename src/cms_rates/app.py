@@ -1,7 +1,4 @@
-"""Streamlit web app for CMS Rates lookup.
-
-Version: 2025-01-13-v2 - Hardcoded localities
-"""
+"""Streamlit web app for CMS Rates lookup."""
 
 import sys
 from pathlib import Path
@@ -77,6 +74,7 @@ def load_data(year: int) -> bool:
 
 def get_locality_options_for_state(state: str, year: int) -> list:
     """Get list of locality options for a state. Returns serializable dicts."""
+
     # Hardcoded locality data to ensure it always works
     LOCALITIES: dict = {
         "AL": [("10112", "01", "Alabama")],
@@ -241,28 +239,24 @@ def render_region_selector(key_prefix: str, year: int):
     # Ensure GPCI data exists before rendering
     ensure_gpci_data(year)
 
-    states = sorted(STATE_NAMES.keys())
-    state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
+    # STATE_NAMES maps full name -> abbreviation, e.g., "CALIFORNIA" -> "CA"
+    # Create options as "CA - California" for better display
+    state_abbrevs = sorted(STATE_NAMES.values())
+    state_name_lookup = {v: k.title() for k, v in STATE_NAMES.items()}  # CA -> California
+    state_options = [f"{abbr} - {state_name_lookup[abbr]}" for abbr in state_abbrevs]
 
     # State selection
     selected_state = st.selectbox(
         "State",
         options=state_options,
-        index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
+        index=state_options.index("CA - California") if "CA - California" in state_options else 0,
         help="Select a state",
         key=f"{key_prefix}_state"
     )
-    state_code = selected_state.split("(")[1].replace(")", "").strip()
+    state_code = selected_state.split(" - ")[0].strip()
 
     # Get localities for selected state
     localities = get_locality_options_for_state(state_code, year)
-
-    # Debug: show locality count and state code
-    st.caption(f"State code: '{state_code}' | Found {len(localities)} localities")
-
-    # Extra debug - show first locality if any
-    if localities:
-        st.caption(f"First locality: {localities[0]}")
 
     # Always show locality dropdown
     if localities:
@@ -365,7 +359,6 @@ st.set_page_config(
 # Title
 st.title("🏥 CMS Medicare Reimbursement Rate Lookup")
 st.markdown("Look up Medicare Physician Fee Schedule rates by CPT code and region")
-st.caption("App version: 2025-01-13-v2")
 
 # Load data (auto-downloads if not present)
 year = get_default_year()
