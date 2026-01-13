@@ -44,11 +44,15 @@ htmlcov/
 # Type checking
 .mypy_cache/
 
-# CMS data files (downloaded separately, top-level only)
+# CMS data files (downloaded separately)
 /data/
 *.db
 *.sqlite
 *.sqlite3
+
+# CMS source data files (large)
+src/cms_rates/*.txt
+src/cms_rates/*.pdf
 
 # Environment variables
 .env
