@@ -769,9 +769,15 @@ with tab4:
                         key="upload_code_col"
                     )
                     rate_col = st.selectbox(
-                        "Rate Column",
-                        columns,
+                        "Rate Column (Non-Facility)",
+                        ["(none)"] + columns,
                         key="upload_rate_col"
+                    )
+                    allowed_col = st.selectbox(
+                        "Allowed Amount Column (optional)",
+                        ["(none)"] + columns,
+                        key="upload_allowed_col",
+                        help="If specified, used as non-facility rate when Rate Column is empty"
                     )
                     fac_rate_col = st.selectbox(
                         "Facility Rate Column (optional)",
@@ -781,7 +787,11 @@ with tab4:
 
                 # Preview data
                 st.markdown("**Preview (first 10 rows):**")
-                preview_cols = [code_col, rate_col]
+                preview_cols = [code_col]
+                if rate_col != "(none)":
+                    preview_cols.append(rate_col)
+                if allowed_col != "(none)":
+                    preview_cols.append(allowed_col)
                 if fac_rate_col != "(none)":
                     preview_cols.append(fac_rate_col)
                 st.dataframe(df_upload[preview_cols].head(10), hide_index=True)
@@ -790,6 +800,8 @@ with tab4:
                 if st.button("Import Fee Schedule", key="import_fee_schedule_btn", type="primary"):
                     if not upload_payer:
                         st.error("Payer Name is required")
+                    elif rate_col == "(none)" and allowed_col == "(none)" and fac_rate_col == "(none)":
+                        st.error("At least one rate column must be selected")
                     else:
                         imported = 0
                         errors = 0
@@ -800,9 +812,16 @@ with tab4:
                                 if not cpt_code:
                                     continue
 
-                                # Parse rate
-                                rate_str = str(row[rate_col]).replace('$', '').replace(',', '').strip()
-                                non_fac_rate = Decimal(rate_str) if rate_str and rate_str != 'nan' else None
+                                # Parse rate from Rate Column
+                                non_fac_rate = None
+                                if rate_col != "(none)":
+                                    rate_str = str(row[rate_col]).replace('$', '').replace(',', '').strip()
+                                    non_fac_rate = Decimal(rate_str) if rate_str and rate_str != 'nan' else None
+
+                                # Parse allowed amount (use as non-facility rate if rate is empty)
+                                if allowed_col != "(none)" and non_fac_rate is None:
+                                    allowed_str = str(row[allowed_col]).replace('$', '').replace(',', '').strip()
+                                    non_fac_rate = Decimal(allowed_str) if allowed_str and allowed_str != 'nan' else None
 
                                 # Parse facility rate if specified
                                 fac_rate = None
