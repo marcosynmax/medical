@@ -83,47 +83,50 @@ def render_region_selector(key_prefix: str, year: int):
     states = sorted(STATE_NAMES.keys())
     state_options = [f"{STATE_NAMES[s]} ({s})" for s in states]
 
-    col1, col2 = st.columns(2)
+    # State selection
+    selected_state = st.selectbox(
+        "State",
+        options=state_options,
+        index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
+        help="Select a state",
+        key=f"{key_prefix}_state"
+    )
+    state_code = selected_state.split("(")[1].replace(")", "").strip()
 
-    with col1:
-        selected_state = st.selectbox(
-            "State",
-            options=state_options,
-            index=state_options.index("California (CA)") if "California (CA)" in state_options else 0,
-            help="Select a state",
-            key=f"{key_prefix}_state"
+    # Get localities for selected state
+    localities = get_locality_options_for_state(state_code, year)
+
+    # Locality selection - always show if localities exist
+    if localities and len(localities) > 1:
+        # Multiple localities - show dropdown with "All" option
+        locality_labels = [loc["label"] for loc in localities]
+        selected_locality = st.selectbox(
+            "Locality",
+            options=["All localities in " + state_code] + locality_labels,
+            index=0,
+            help="Select a specific locality within the state",
+            key=f"{key_prefix}_locality"
         )
-        state_code = selected_state.split("(")[1].replace(")", "").strip()
 
-    with col2:
-        # Get localities for selected state
-        localities = get_locality_options_for_state(state_code, year)
-
-        if localities and len(localities) > 1:
-            locality_labels = ["All localities"] + [loc["label"] for loc in localities]
-            selected_idx = st.selectbox(
-                "Locality",
-                options=range(len(locality_labels)),
-                format_func=lambda i: locality_labels[i],
-                index=0,
-                help="Select a specific locality or 'All localities'",
-                key=f"{key_prefix}_locality"
-            )
-
-            if selected_idx == 0:  # "All localities"
-                return state_code, None, True
-            else:
-                loc = localities[selected_idx - 1]
-                carrier_locality = f"{loc['carrier']}-{loc['locality']}"
-                return carrier_locality, loc["name"], False
-        elif localities:
-            # Only one locality
-            loc = localities[0]
-            st.info(f"Locality: {loc['name']}")
-            return f"{loc['carrier']}-{loc['locality']}", loc["name"], False
+        if selected_locality.startswith("All localities"):
+            return state_code, None, True
         else:
-            st.warning("No localities found for this state")
-            return state_code, None, False
+            # Find the selected locality
+            for loc in localities:
+                if loc["label"] == selected_locality:
+                    carrier_locality = f"{loc['carrier']}-{loc['locality']}"
+                    return carrier_locality, loc["name"], False
+            # Fallback
+            return state_code, None, True
+    elif localities:
+        # Single locality - show as info
+        loc = localities[0]
+        st.info(f"📍 Locality: {loc['name']}")
+        return f"{loc['carrier']}-{loc['locality']}", loc["name"], False
+    else:
+        # No localities found - use state code
+        st.warning(f"No locality data found for {state_code}")
+        return state_code, None, False
 
 
 def display_results(results, show_breakdown, show_all_localities):
