@@ -1,12 +1,13 @@
 # CMS Rates
 
-A Python CLI tool for looking up Medicare Physician Fee Schedule reimbursement rates by CPT code and geographic region.
+A Python tool for looking up Medicare Physician Fee Schedule reimbursement rates by CPT code and geographic region. Includes both a CLI and a web-based GUI.
 
 ## Features
 
 - Look up Medicare reimbursement rates by CPT/HCPCS code and state/locality
 - Support for facility and non-facility rates
-- Multiple output formats: table, JSON, CSV
+- Web-based GUI for easy lookups
+- CLI with multiple output formats: table, JSON, CSV
 - Verbose mode showing calculation breakdown
 - Downloads official CMS RVU data files
 - Covers all 50 states with 90+ locality-specific GPCI adjustments
@@ -22,7 +23,7 @@ A Python CLI tool for looking up Medicare Physician Fee Schedule reimbursement r
 
 ```bash
 cd medical
-pip install click rich httpx pydantic
+pip install click rich httpx pydantic streamlit
 ```
 
 ### Download CMS data
@@ -35,7 +36,24 @@ PYTHONPATH=src python3 -m cms_rates update
 
 This downloads ~18,000 CPT codes and GPCI data for all localities.
 
-## Usage
+## Web GUI
+
+Launch the web-based graphical interface:
+
+```bash
+PYTHONPATH=src streamlit run src/cms_rates/app.py
+```
+
+Then open http://localhost:8501 in your browser.
+
+The GUI provides:
+- CPT code input field
+- State/region dropdown selector
+- Facility/non-facility toggle
+- Calculation breakdown display
+- View all localities in a state
+
+## CLI Usage
 
 ### Basic lookup
 
